@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 )
 
 var (
@@ -18,6 +19,36 @@ type CoreDumpDecoder struct {
 
 	state int
 	buf   []byte
+
+	lastOk     bool
+	lastResult CoreDumpResult
+}
+
+func (d *CoreDumpDecoder) BufferedBytes() int {
+	return len(d.buf)
+}
+
+type CoreDumpResult struct {
+	SavedPath string
+	RawBytes  int
+
+	DecodedOK bool
+	Report    []byte
+	DecodeErr string
+
+	HadElf bool
+}
+
+func (d *CoreDumpDecoder) LastResult() (CoreDumpResult, bool) {
+	if !d.lastOk {
+		return CoreDumpResult{}, false
+	}
+	return d.lastResult, true
+}
+
+func (d *CoreDumpDecoder) Abort() {
+	d.state = coreDumpIdle
+	d.buf = nil
 }
 
 const (
@@ -39,13 +70,16 @@ func (d *CoreDumpDecoder) PushLine(line []byte) (events [][]byte, sendEnter bool
 	if bytes.Contains(line, CoreDumpStart) {
 		d.state = coreDumpReading
 		d.buf = nil
+		d.lastOk = false
 		return [][]byte{[]byte("--- Core dump started (muting output)\n")}, false
 	}
 
 	if d.state == coreDumpReading {
 		if bytes.Contains(line, CoreDumpEnd) {
-			// decode
-			decoded := d.decodeOrRaw()
+			res, decoded := d.decodeOrRaw(time.Now())
+			d.lastOk = true
+			d.lastResult = res
+
 			events = append(events, decoded...)
 			events = append(events, []byte("--- Core dump finished\n"))
 			d.state = coreDumpIdle
@@ -60,45 +94,50 @@ func (d *CoreDumpDecoder) PushLine(line []byte) (events [][]byte, sendEnter bool
 	return nil, false
 }
 
-func (d *CoreDumpDecoder) decodeOrRaw() [][]byte {
-	if d.ElfPath == "" {
-		return [][]byte{
-			[]byte("--- Core dump captured (no -elf provided; raw below)\n"),
-			d.buf,
-		}
+func (d *CoreDumpDecoder) decodeOrRaw(now time.Time) (CoreDumpResult, [][]byte) {
+	res := CoreDumpResult{
+		RawBytes: len(d.buf),
+		HadElf:   d.ElfPath != "",
 	}
 
-	tmp, err := os.CreateTemp("", "esper-coredump-*.b64")
+	tmp, err := os.CreateTemp("", fmt.Sprintf("esper-coredump-%s-*.b64", now.Format("20060102-150405")))
 	if err != nil {
-		return [][]byte{
-			[]byte(fmt.Sprintf("--- Core dump captured; tempfile error: %v; raw below\n", err)),
-			d.buf,
-		}
+		res.DecodeErr = fmt.Sprintf("tempfile error: %v", err)
+		return res, [][]byte{[]byte(fmt.Sprintf("--- Core dump captured; %s\n", res.DecodeErr))}
 	}
-	defer os.Remove(tmp.Name())
+	res.SavedPath = tmp.Name()
 	if _, err := tmp.Write(d.buf); err != nil {
-		tmp.Close()
-		return [][]byte{
-			[]byte(fmt.Sprintf("--- Core dump captured; write error: %v; raw below\n", err)),
-			d.buf,
-		}
+		_ = tmp.Close()
+		res.DecodeErr = fmt.Sprintf("write error: %v", err)
+		return res, [][]byte{[]byte(fmt.Sprintf("--- Core dump captured; %s (raw at %s)\n", res.DecodeErr, res.SavedPath))}
 	}
 	_ = tmp.Close()
+
+	if d.ElfPath == "" {
+		res.DecodeErr = "no -elf provided"
+		return res, [][]byte{[]byte(fmt.Sprintf("--- Core dump captured (no -elf provided; raw saved to %s)\n", res.SavedPath))}
+	}
 
 	// Use esp_coredump (Python) for parity in Phase 1.
 	py := fmt.Sprintf(
 		"import esp_coredump\nc=esp_coredump.CoreDump(core=%q, core_format='b64', prog=%q)\nc.info_corefile()",
-		tmp.Name(),
+		res.SavedPath,
 		d.ElfPath,
 	)
 	cmd := exec.Command("python3", "-c", py)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return [][]byte{
-			[]byte(fmt.Sprintf("--- Core dump decode failed (%v); raw below\n", err)),
-			d.buf,
+		res.DecodeErr = fmt.Sprintf("%v", err)
+		res.Report = out
+		return res, [][]byte{
+			[]byte(fmt.Sprintf("--- Core dump decode failed (%s); raw saved to %s\n", res.DecodeErr, res.SavedPath)),
 		}
 	}
-	return [][]byte{[]byte("--- Core dump report:\n"), out}
+	res.DecodedOK = true
+	res.Report = out
+	return res, [][]byte{
+		[]byte(fmt.Sprintf("--- Core dump saved to %s\n", res.SavedPath)),
+		[]byte("--- Core dump report:\n"),
+		out,
+	}
 }
-

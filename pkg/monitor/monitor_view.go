@@ -59,7 +59,8 @@ type monitorModel struct {
 	panic        decode.PanicDecoder
 	coredump     decode.CoreDumpDecoder
 
-	lastDataAt time.Time
+	lastDataAt        time.Time
+	coreDumpStartedAt time.Time
 
 	out string
 	log []string
@@ -141,6 +142,23 @@ func (m *monitorModel) setSize(sz size) {
 func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, monitorAction) {
 	switch t := msg.(type) {
 	case tea.KeyMsg:
+		// Global disconnect (matches UX spec).
+		if t.String() == "ctrl+d" {
+			return m, nil, monitorAction{kind: monitorActionDisconnect, reason: "user disconnect"}
+		}
+
+		// Core dump capture mode: disable input and shortcuts; allow abort.
+		if m.coredump.InProgress() {
+			if t.Type == tea.KeyCtrlC {
+				m.coredump.Abort()
+				m.coreDumpStartedAt = time.Time{}
+				m.addEvent("coredump", "Core dump capture aborted", "User aborted core dump capture (Ctrl-C).")
+				m.setToast("Core dump capture aborted", 2*time.Second)
+				return m, nil, monitorAction{}
+			}
+			return m, nil, monitorAction{}
+		}
+
 		if t.String() == "ctrl+t" {
 			if curMode == modeHost {
 				// UX spec wants ctrl+t t for command palette, but ctrl+t alone exits host mode.
@@ -154,11 +172,6 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			m.follow = false
 			m.hostFocus = hostFocusViewport
 			return m, nil, monitorAction{kind: monitorActionModeChanged, mode: modeHost}
-		}
-
-		// Global disconnect (matches UX spec).
-		if t.String() == "ctrl+d" {
-			return m, nil, monitorAction{kind: monitorActionDisconnect, reason: "user disconnect"}
 		}
 
 		if curMode == modeHost {
@@ -312,20 +325,49 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 
 		lines := m.lineSplitter.Push(t.b)
 		for _, line := range lines {
+			wasInProgress := m.coredump.InProgress()
 			events, sendEnter := m.coredump.PushLine(line)
+			nowInProgress := m.coredump.InProgress()
 			if sendEnter && m.session != nil {
 				_, _ = m.session.port.Write([]byte("\n"))
 			}
-			if m.coredump.InProgress() {
+
+			if sendEnter {
+				m.addEvent("coredump", "Core dump prompt detected", "Detected core dump prompt; sending Enter to start dump.")
+				m.setToast("Core dump prompt detected; sending Enter", 2*time.Second)
+			}
+
+			if !wasInProgress && nowInProgress {
+				m.coreDumpStartedAt = time.Now()
+				m.addEvent("coredump", "Core dump capture started", "Started core dump capture (output muted).")
+				m.setToast("Core dump capture started", 2*time.Second)
+			}
+			if wasInProgress && !nowInProgress {
+				m.coreDumpStartedAt = time.Time{}
+				body := "Core dump captured."
+				if res, ok := m.coredump.LastResult(); ok {
+					status := "Captured"
+					if res.DecodedOK {
+						status = "✓ Captured and decoded successfully"
+					} else if res.HadElf {
+						status = "⚠ Captured but decode failed"
+					} else {
+						status = "⚠ Captured (no -elf provided)"
+					}
+					body = fmt.Sprintf("Status: %s\nSize: %d bytes\nSaved to: %s", status, res.RawBytes, res.SavedPath)
+					if !res.DecodedOK && res.DecodeErr != "" {
+						body += "\nDecode error: " + res.DecodeErr
+					}
+				} else if len(events) > 0 {
+					body = strings.TrimSpace(string(bytes.Join(events, nil)))
+				}
+				m.addEvent("coredump", "Core dump report", body)
+				m.setToast("Core dump captured (HOST mode: press i for inspector)", 3*time.Second)
+			}
+
+			if nowInProgress {
 				// suppress normal output while buffering
 				continue
-			}
-			for _, e := range events {
-				m.append(e)
-				if bytes.HasPrefix(e, []byte("--- Core dump")) {
-					m.addEvent("coredump", "Core dump event", string(e))
-					m.setToast("Core dump event captured (HOST mode: press i for inspector)", 3*time.Second)
-				}
 			}
 
 			// panic backtrace decode is opportunistic: if the line contains Backtrace:, emit extra decoded lines.
@@ -418,7 +460,9 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 	}
 
 	footer := ""
-	if curMode == modeHost {
+	if m.coredump.InProgress() {
+		footer = padOrTrim(st.Hint.Render("(input disabled during capture)"), sz.W)
+	} else if curMode == modeHost {
 		footerText := "Ctrl-T: DEVICE   Ctrl-T T: commands   PgUp/PgDn scroll   G: resume follow   / search   f filter   i inspector"
 		if m.showInspector {
 			footerText += "   Tab: focus"
@@ -436,7 +480,70 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, main, status, footer)
+	if m.coredump.InProgress() {
+		content = renderOverlayOver(st, sz, content, m.renderCoreDumpProgressBox(st, sz))
+	}
 	return content
+}
+
+func (m monitorModel) renderCoreDumpProgressBox(st styles, sz size) string {
+	w := max(44, min(62, sz.W-8))
+	h := max(11, min(15, sz.H-6))
+
+	innerW := max(0, w-st.OverlayBox.GetHorizontalFrameSize())
+	innerH := max(0, h-st.OverlayBox.GetVerticalFrameSize())
+
+	elapsed := time.Since(m.coreDumpStartedAt).Round(100 * time.Millisecond)
+	if m.coreDumpStartedAt.IsZero() {
+		elapsed = 0
+	}
+	buf := m.coredump.BufferedBytes()
+
+	bufStr := fmt.Sprintf("%d bytes", buf)
+	if buf >= 1024*1024 {
+		bufStr = fmt.Sprintf("%.2f MiB", float64(buf)/(1024.0*1024.0))
+	} else if buf >= 1024 {
+		bufStr = fmt.Sprintf("%.1f KiB", float64(buf)/1024.0)
+	}
+
+	// Best-effort progress for UX parity: core dumps are commonly ~64 KiB.
+	const defaultTarget = 64 * 1024
+	pct := float64(buf) / float64(defaultTarget)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 1 {
+		pct = 1
+	}
+
+	barW := max(10, innerW-8)
+	filled := int(pct * float64(barW))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > barW {
+		filled = barW
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", max(0, barW-filled))
+	pctStr := fmt.Sprintf("%d%%", int(pct*100.0+0.5))
+
+	title := st.PanelTitle.Render("CORE DUMP CAPTURE IN PROGRESS")
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		"Receiving core dump data...",
+		fmt.Sprintf("Buffered: %s", bufStr),
+		fmt.Sprintf("Elapsed:  %s", elapsed),
+		"",
+		fmt.Sprintf("%s  %s", bar, pctStr),
+		st.Hint.Render("Normal output is MUTED during capture."),
+		st.Hint.Render("Core dump will auto-decode when complete."),
+	)
+
+	content := lipgloss.NewStyle().
+		Width(innerW).
+		Height(innerH).
+		Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body))
+	return st.OverlayBox.Width(w).Height(h).Render(content)
 }
 
 func (m monitorModel) renderTitle() string {
@@ -452,6 +559,20 @@ func (m monitorModel) renderTitle() string {
 }
 
 func (m monitorModel) renderStatus(curMode mode) string {
+	if m.coredump.InProgress() {
+		buf := m.coredump.BufferedBytes()
+		bufStr := fmt.Sprintf("%d bytes", buf)
+		if buf >= 1024*1024 {
+			bufStr = fmt.Sprintf("%.2f MiB", float64(buf)/(1024.0*1024.0))
+		} else if buf >= 1024 {
+			bufStr = fmt.Sprintf("%.1f KiB", float64(buf)/1024.0)
+		}
+		return fmt.Sprintf("Mode: CAPTURE │ Follow: — │ Capture: %s │ Press Ctrl-C to abort │ %s",
+			bufStr,
+			m.now.Format("15:04:05"),
+		)
+	}
+
 	modeStr := "DEVICE"
 	if curMode == modeHost {
 		modeStr = "HOST"

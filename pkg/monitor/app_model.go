@@ -123,6 +123,10 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.Type {
 		case tea.KeyCtrlC:
+			if m.screen == screenMonitor && m.monitor.coredump.InProgress() {
+				// During core dump capture, Ctrl-C aborts capture (per UX spec) instead of quitting.
+				break
+			}
 			return m, tea.Quit
 		}
 		if k.String() == "?" && m.overlay == nil {
