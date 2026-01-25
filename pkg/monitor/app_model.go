@@ -258,6 +258,11 @@ func (m *appModel) applyMonitorAction(act monitorAction, cmd tea.Cmd) tea.Cmd {
 	case monitorActionModeChanged:
 		m.mode = act.mode
 		return cmd
+	case monitorActionShowHelp:
+		m.overlay = overlayHelp
+		return cmd
+	case monitorActionQuit:
+		return tea.Quit
 	default:
 		return cmd
 	}
