@@ -3,7 +3,6 @@ package monitor
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -19,17 +18,8 @@ func (m *helpOverlayModel) setSize(sz size) {
 	m.sz = sz
 }
 
-func (m helpOverlayModel) Update(msg tea.KeyMsg) (helpOverlayModel, tea.Cmd) {
-	// Overlay key handling is done in appModel (Esc/q to close).
-	_ = msg
-	return m, nil
-}
-
-func (m helpOverlayModel) RenderOver(st styles, winW, winH int, background string) string {
-	_ = background
-
-	innerW := winW - st.ScreenFrame.GetHorizontalBorderSize()
-	innerH := winH - st.ScreenFrame.GetVerticalBorderSize()
+func (m helpOverlayModel) View(st styles) string {
+	innerW, innerH := m.sz.W, m.sz.H
 	if innerW < 1 || innerH < 1 {
 		return ""
 	}
@@ -37,16 +27,14 @@ func (m helpOverlayModel) RenderOver(st styles, winW, winH int, background strin
 	boxW := min(72, max(30, innerW-6))
 	boxH := min(18, max(10, innerH-6))
 
-	content := m.helpText(boxW - st.OverlayBox.GetHorizontalBorderSize())
 	boxInnerW := max(0, boxW-st.OverlayBox.GetHorizontalBorderSize())
 	boxInnerH := max(0, boxH-st.OverlayBox.GetVerticalBorderSize())
-	box := st.OverlayBox.
+
+	content := m.helpText(boxInnerW)
+	return st.OverlayBox.
 		Width(boxInnerW).
 		Height(boxInnerH).
 		Render(content)
-
-	overlay := lipgloss.Place(winW, winH, lipgloss.Center, lipgloss.Center, box)
-	return overlay
 }
 
 func (m helpOverlayModel) helpText(w int) string {

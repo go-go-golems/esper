@@ -23,13 +23,6 @@ const (
 	modeHost
 )
 
-type overlayKind int
-
-const (
-	overlayNone overlayKind = iota
-	overlayHelp
-)
-
 type appModel struct {
 	ctx context.Context
 
@@ -40,7 +33,7 @@ type appModel struct {
 
 	screen  screen
 	mode    mode
-	overlay overlayKind
+	overlay overlayModel
 
 	styles styles
 
@@ -48,20 +41,17 @@ type appModel struct {
 
 	portPicker portPickerModel
 	monitor    monitorModel
-	help       helpOverlayModel
 
 	initialConnect *connectParams
 }
 
 func newAppModel(ctx context.Context, cfg Config) *appModel {
 	m := &appModel{
-		ctx:     ctx,
-		cfg:     cfg,
-		screen:  screenPortPicker,
-		mode:    modeDevice,
-		overlay: overlayNone,
-		styles:  defaultStyles(),
-		help:    newHelpOverlayModel(),
+		ctx:    ctx,
+		cfg:    cfg,
+		screen: screenPortPicker,
+		mode:   modeDevice,
+		styles: defaultStyles(),
 	}
 
 	m.portPicker = newPortPickerModel(portPickerConfig{
@@ -103,9 +93,12 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch t := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = t.Width, t.Height
-		m.portPicker.setSize(m.innerSize())
-		m.monitor.setSize(m.innerSize())
-		m.help.setSize(m.innerSize())
+		inner := m.innerSize()
+		m.portPicker.setSize(inner)
+		m.monitor.setSize(inner)
+		if m.overlay != nil {
+			m.overlay.setSize(inner)
+		}
 		return m, nil
 	}
 
@@ -115,31 +108,41 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		}
-		if k.String() == "?" {
-			if m.overlay == overlayHelp {
-				m.overlay = overlayNone
-				return m, nil
-			}
-			m.overlay = overlayHelp
-			return m, nil
-		}
-		if m.overlay == overlayHelp && (k.Type == tea.KeyEsc || k.String() == "q") {
-			m.overlay = overlayNone
+		if k.String() == "?" && m.overlay == nil {
+			m.overlay = newHelpOverlay()
+			m.overlay.setSize(m.innerSize())
+			m.overlay.open()
 			return m, nil
 		}
 	}
 
 	// Overlay captures input first.
-	if m.overlay != overlayNone {
+	if m.overlay != nil {
 		if k, ok := msg.(tea.KeyMsg); ok {
-			var cmd tea.Cmd
-			m.help, cmd = m.help.Update(k)
-			return m, cmd
+			ov, cmd1, out := m.overlay.Update(k)
+			m.overlay = ov
+			if k.Type == tea.KeyEsc {
+				out.close = true
+			}
+			if out.close {
+				m.overlay = nil
+			}
+
+			cmd2 := m.routeToScreen(out.forward)
+			return m, tea.Batch(cmd1, cmd2)
 		}
 		return m, nil
 	}
 
 	switch msg := msg.(type) {
+	case openOverlayMsg:
+		if msg.overlay == nil {
+			return m, nil
+		}
+		m.overlay = msg.overlay
+		m.overlay.setSize(m.innerSize())
+		m.overlay.open()
+		return m, nil
 	case portsScanResultMsg:
 		m.portPicker.applyScanResult(msg)
 		return m, nil
@@ -152,6 +155,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.close()
+		m.overlay = nil
 		m.session = msg.session
 		m.cfg.Port = msg.portPath
 		m.cfg.Baud = msg.baud
@@ -166,6 +170,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.monitor.readSerialCmd(), m.monitor.tickCmd())
 	case disconnectMsg:
 		m.close()
+		m.overlay = nil
 		m.session = nil
 		m.screen = screenPortPicker
 		return m, m.portPicker.scanPortsCmd(m.ctx)
@@ -211,15 +216,16 @@ func (m *appModel) View() string {
 	}
 	inner = strings.Join(innerLines, "\n")
 
+	if m.overlay != nil {
+		box := m.overlay.View(m.styles)
+		inner = renderOverlayOver(m.styles, innerSz, inner, box)
+	}
+
 	// Screen chrome: outer border around whole UI.
 	frame := m.styles.ScreenFrame.
 		Width(innerSz.W).
 		Height(innerSz.H).
 		Render(inner)
-
-	if m.overlay == overlayHelp {
-		return m.help.RenderOver(m.styles, m.winW, m.winH, frame)
-	}
 	return frame
 }
 
@@ -268,13 +274,36 @@ func (m *appModel) applyMonitorAction(act monitorAction, cmd tea.Cmd) tea.Cmd {
 	case monitorActionModeChanged:
 		m.mode = act.mode
 		return cmd
-	case monitorActionShowHelp:
-		m.overlay = overlayHelp
+	case monitorActionOpenOverlay:
+		if act.overlay != nil {
+			m.overlay = act.overlay
+			m.overlay.setSize(m.innerSize())
+			m.overlay.open()
+		}
 		return cmd
 	case monitorActionQuit:
 		return tea.Quit
 	default:
 		return cmd
+	}
+}
+
+func (m *appModel) routeToScreen(msg tea.Msg) tea.Cmd {
+	if msg == nil {
+		return nil
+	}
+
+	switch m.screen {
+	case screenPortPicker:
+		pm, cmd, act := m.portPicker.Update(msg)
+		m.portPicker = pm
+		return m.applyPortPickerAction(act, cmd)
+	case screenMonitor:
+		mm, cmd, act := m.monitor.Update(msg, m.mode)
+		m.monitor = mm
+		return m.applyMonitorAction(act, cmd)
+	default:
+		return nil
 	}
 }
 

@@ -6,15 +6,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type monitorOverlayKind int
-
-const (
-	monitorOverlayNone monitorOverlayKind = iota
-	monitorOverlaySearch
-	monitorOverlayFilter
-	monitorOverlayPalette
-)
-
 type ctrlTPrefixTimeoutMsg struct {
 	id int
 }

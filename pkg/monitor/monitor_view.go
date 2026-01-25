@@ -22,14 +22,15 @@ const (
 	monitorActionNone monitorActionKind = iota
 	monitorActionDisconnect
 	monitorActionModeChanged
-	monitorActionShowHelp
+	monitorActionOpenOverlay
 	monitorActionQuit
 )
 
 type monitorAction struct {
-	kind   monitorActionKind
-	reason string
-	mode   mode
+	kind    monitorActionKind
+	reason  string
+	mode    mode
+	overlay overlayModel
 }
 
 type hostFocus int
@@ -80,10 +81,9 @@ type monitorModel struct {
 	toastUntil time.Time
 	toastText  string
 
-	overlay monitorOverlayKind
-	search  searchOverlayModel
-	filter  filterOverlayModel
-	palette paletteOverlayModel
+	searchQuery   string
+	searchMatches []int
+	searchCur     int
 
 	ctrlTPending   bool
 	ctrlTPendingID int
@@ -114,10 +114,6 @@ func newMonitorModel(cfg Config, session *serialSession) monitorModel {
 	ti.Focus()
 	m.input = ti
 
-	m.search = newSearchOverlayModel()
-	m.filter = newFilterOverlayModel()
-	m.palette = newPaletteOverlayModel()
-
 	return m
 }
 
@@ -140,20 +136,11 @@ func (m *monitorModel) setSize(sz size) {
 	if m.follow {
 		m.viewport.GotoBottom()
 	}
-
-	m.search.setSize(sz)
-	m.filter.setSize(sz)
-	m.palette.setSize(sz)
 }
 
 func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, monitorAction) {
 	switch t := msg.(type) {
 	case tea.KeyMsg:
-		// If a host-mode overlay is active, it captures keys first.
-		if curMode == modeHost && m.overlay != monitorOverlayNone {
-			return m.updateOverlay(t, curMode)
-		}
-
 		if t.String() == "ctrl+t" {
 			if curMode == modeHost {
 				// UX spec wants ctrl+t t for command palette, but ctrl+t alone exits host mode.
@@ -187,9 +174,7 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 				if t.String() == "t" {
 					// ctrl+t t opens command palette.
 					m.ctrlTPending = false
-					m.overlay = monitorOverlayPalette
-					m.palette.open()
-					return m, nil, monitorAction{}
+					return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newPaletteOverlay()}
 				}
 				// During the ctrl+t prefix window, ignore other host shortcuts.
 				return m, nil, monitorAction{}
@@ -198,13 +183,9 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			// Host-mode overlays.
 			switch t.String() {
 			case "/":
-				m.overlay = monitorOverlaySearch
-				m.search.open()
-				return m, nil, monitorAction{}
+				return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newSearchOverlay(m.searchQuery)}
 			case "f":
-				m.overlay = monitorOverlayFilter
-				m.filter.openFrom(m.filterCfg)
-				return m, nil, monitorAction{}
+				return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
 			}
 
 			// Exit to device mode.
@@ -294,6 +275,26 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(t)
 		return m, cmd, monitorAction{}
+
+	case searchActionMsg:
+		m.searchQuery = strings.TrimSpace(t.query)
+		switch t.kind {
+		case searchActionJump:
+			m.searchApplyJump()
+		case searchActionNext:
+			m.searchApplyNext()
+		case searchActionPrev:
+			m.searchApplyPrev()
+		}
+		return m, nil, monitorAction{}
+
+	case filterSetMsg:
+		m.filterCfg = t.cfg
+		m.refreshViewportContent()
+		return m, nil, monitorAction{}
+
+	case paletteExecMsg:
+		return m, nil, m.execPalette(t.cmd)
 
 	case serialChunkMsg:
 		if len(t.b) == 0 {
@@ -433,9 +434,6 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, main, status, footer)
-	if curMode == modeHost {
-		content = m.renderOverlayIfNeeded(st, sz, content)
-	}
 	return content
 }
 
@@ -517,7 +515,7 @@ func (m monitorModel) filterSummary() string {
 }
 
 func (m monitorModel) searchSummary() string {
-	q := strings.TrimSpace(m.search.query)
+	q := strings.TrimSpace(m.searchQuery)
 	if q == "" {
 		return "—"
 	}
@@ -724,85 +722,6 @@ func (m monitorModel) filteredLines() []string {
 	return out
 }
 
-func (m monitorModel) updateOverlay(k tea.KeyMsg, curMode mode) (monitorModel, tea.Cmd, monitorAction) {
-	_ = curMode
-	switch m.overlay {
-	case monitorOverlaySearch:
-		s, cmd, res := m.search.Update(k)
-		m.search = s
-		switch res.kind {
-		case searchOverlayClose:
-			m.overlay = monitorOverlayNone
-		case searchOverlayJump:
-			m.searchApplyJump()
-			m.overlay = monitorOverlayNone
-		case searchOverlayNext:
-			m.searchApplyNext()
-		case searchOverlayPrev:
-			m.searchApplyPrev()
-		}
-		return m, cmd, monitorAction{}
-	case monitorOverlayFilter:
-		fm, cmd, res := m.filter.Update(k)
-		m.filter = fm
-		switch res.kind {
-		case filterOverlayCancel:
-			m.overlay = monitorOverlayNone
-		case filterOverlayClear:
-			m.filterCfg = res.cfg
-			m.overlay = monitorOverlayNone
-			m.refreshViewportContent()
-		case filterOverlayApply:
-			m.filterCfg = res.cfg
-			m.overlay = monitorOverlayNone
-			m.refreshViewportContent()
-		}
-		return m, cmd, monitorAction{}
-	case monitorOverlayPalette:
-		pm, cmd, res := m.palette.Update(k)
-		m.palette = pm
-		switch res.kind {
-		case paletteOverlayClose:
-			m.overlay = monitorOverlayNone
-		case paletteOverlayExec:
-			m.overlay = monitorOverlayNone
-			return m, cmd, m.execPalette(res.cmd)
-		}
-		return m, cmd, monitorAction{}
-	default:
-		return m, nil, monitorAction{}
-	}
-}
-
-func (m monitorModel) renderOverlayIfNeeded(st styles, sz size, content string) string {
-	var box string
-	switch m.overlay {
-	case monitorOverlaySearch:
-		box = m.search.View(st)
-	case monitorOverlayFilter:
-		box = m.filter.View(st)
-	case monitorOverlayPalette:
-		box = m.palette.View(st)
-	default:
-		return content
-	}
-
-	// Bubble Tea can't truly "layer" strings, but we can approximate an overlay by
-	// rendering both at full screen size and then replacing the rows that contain
-	// the overlay box.
-	bg := st.OverlayDim.Render(content)
-	ov := lipgloss.Place(sz.W, sz.H, lipgloss.Center, lipgloss.Center, box)
-
-	bgLines := splitLinesN(bg, sz.H)
-	ovLines := splitLinesN(ov, sz.H)
-	for i := 0; i < sz.H && i < len(bgLines) && i < len(ovLines); i++ {
-		if strings.TrimSpace(stripANSI(ovLines[i])) != "" {
-			bgLines[i] = ovLines[i]
-		}
-	}
-	return strings.Join(bgLines, "\n")
-}
-
 func splitLinesN(s string, n int) []string {
 	lines := strings.Split(s, "\n")
 	// lipgloss output sometimes has a trailing newline; drop it if it would add an extra empty row.
@@ -820,68 +739,64 @@ func splitLinesN(s string, n int) []string {
 
 func (m *monitorModel) searchApplyJump() {
 	m.searchComputeMatches()
-	if len(m.search.matches) == 0 {
+	if len(m.searchMatches) == 0 {
 		m.setToast("no matches", 2*time.Second)
 		return
 	}
-	m.search.cur = clamp(m.search.cur, 0, len(m.search.matches)-1)
-	m.viewport.YOffset = clamp(m.search.matches[m.search.cur], 0, max(0, m.viewport.TotalLineCount()-1))
+	m.searchCur = clamp(m.searchCur, 0, len(m.searchMatches)-1)
+	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
 }
 
 func (m *monitorModel) searchApplyNext() {
 	m.searchComputeMatches()
-	if len(m.search.matches) == 0 {
+	if len(m.searchMatches) == 0 {
 		m.setToast("no matches", 2*time.Second)
 		return
 	}
-	m.search.cur = (m.search.cur + 1) % len(m.search.matches)
-	m.viewport.YOffset = clamp(m.search.matches[m.search.cur], 0, max(0, m.viewport.TotalLineCount()-1))
+	m.searchCur = (m.searchCur + 1) % len(m.searchMatches)
+	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
 }
 
 func (m *monitorModel) searchApplyPrev() {
 	m.searchComputeMatches()
-	if len(m.search.matches) == 0 {
+	if len(m.searchMatches) == 0 {
 		m.setToast("no matches", 2*time.Second)
 		return
 	}
-	m.search.cur = (m.search.cur + len(m.search.matches) - 1) % len(m.search.matches)
-	m.viewport.YOffset = clamp(m.search.matches[m.search.cur], 0, max(0, m.viewport.TotalLineCount()-1))
+	m.searchCur = (m.searchCur + len(m.searchMatches) - 1) % len(m.searchMatches)
+	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
 }
 
 func (m *monitorModel) searchComputeMatches() {
-	query := strings.TrimSpace(m.search.query)
+	query := strings.TrimSpace(m.searchQuery)
 	if query == "" {
-		m.search.matches = nil
-		m.search.cur = 0
+		m.searchMatches = nil
+		m.searchCur = 0
 		return
 	}
 
 	lines := m.filteredLines()
-	m.search.matches = nil
+	m.searchMatches = nil
 	for i, line := range lines {
 		if containsQuery(line, query) {
-			m.search.matches = append(m.search.matches, i)
+			m.searchMatches = append(m.searchMatches, i)
 		}
 	}
-	if len(m.search.matches) == 0 {
-		m.search.cur = 0
+	if len(m.searchMatches) == 0 {
+		m.searchCur = 0
 		return
 	}
-	if m.search.cur >= len(m.search.matches) {
-		m.search.cur = 0
+	if m.searchCur >= len(m.searchMatches) {
+		m.searchCur = 0
 	}
 }
 
 func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 	switch cmd.Kind {
 	case cmdOpenSearch:
-		m.overlay = monitorOverlaySearch
-		m.search.open()
-		return monitorAction{}
+		return monitorAction{kind: monitorActionOpenOverlay, overlay: newSearchOverlay(m.searchQuery)}
 	case cmdOpenFilter:
-		m.overlay = monitorOverlayFilter
-		m.filter.openFrom(m.filterCfg)
-		return monitorAction{}
+		return monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
 	case cmdToggleInspector:
 		m.showInspector = !m.showInspector
 		m.setSize(m.sz)
@@ -896,7 +811,7 @@ func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 		m.selectedEvent = 0
 		return monitorAction{}
 	case cmdShowHelp:
-		return monitorAction{kind: monitorActionShowHelp}
+		return monitorAction{kind: monitorActionOpenOverlay, overlay: newHelpOverlay()}
 	case cmdQuit:
 		return monitorAction{kind: monitorActionQuit}
 	default:

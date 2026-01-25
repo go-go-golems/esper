@@ -102,3 +102,24 @@ func (s *serialSession) WriteLine(line string) error {
 	_, err := s.port.Write([]byte("\r\n"))
 	return err
 }
+
+type searchActionKind int
+
+const (
+	searchActionJump searchActionKind = iota
+	searchActionNext
+	searchActionPrev
+)
+
+type searchActionMsg struct {
+	kind  searchActionKind
+	query string
+}
+
+type filterSetMsg struct {
+	cfg filterConfig
+}
+
+type paletteExecMsg struct {
+	cmd paletteCommand
+}

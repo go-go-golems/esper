@@ -43,6 +43,13 @@ func (m *searchOverlayModel) open() {
 	m.input.Focus()
 }
 
+func (m *searchOverlayModel) openFrom(query string) {
+	m.open()
+	query = strings.TrimSpace(query)
+	m.query = query
+	m.input.SetValue(query)
+}
+
 type searchOverlayResultKind int
 
 const (
