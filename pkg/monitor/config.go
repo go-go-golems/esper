@@ -6,4 +6,3 @@ type Config struct {
 	ElfPath         string
 	ToolchainPrefix string
 }
-
