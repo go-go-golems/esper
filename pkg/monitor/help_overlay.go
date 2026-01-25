@@ -65,6 +65,8 @@ func (m helpOverlayModel) helpText(w int) string {
 		"  Ctrl-T   Toggle HOST/DEVICE mode",
 		"  PgUp/Dn  Scroll (HOST)",
 		"  G        Resume follow (DEVICE)",
+		"  i        Toggle inspector (HOST)",
+		"  Tab      Toggle focus (HOST, inspector open)",
 		"",
 		"Close help: Esc or q",
 	}

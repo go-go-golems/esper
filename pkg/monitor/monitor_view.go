@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -27,6 +28,20 @@ type monitorAction struct {
 	mode   mode
 }
 
+type hostFocus int
+
+const (
+	hostFocusViewport hostFocus = iota
+	hostFocusInspector
+)
+
+type monitorEvent struct {
+	At    time.Time
+	Kind  string
+	Title string
+	Body  string
+}
+
 type monitorModel struct {
 	sz size
 
@@ -49,6 +64,16 @@ type monitorModel struct {
 	input textinput.Model
 
 	now time.Time
+
+	// Host-mode extras.
+	hostFocus     hostFocus
+	showInspector bool
+
+	events        []monitorEvent
+	selectedEvent int
+
+	toastUntil time.Time
+	toastText  string
 }
 
 func newMonitorModel(cfg Config, session *serialSession) monitorModel {
@@ -58,6 +83,7 @@ func newMonitorModel(cfg Config, session *serialSession) monitorModel {
 		lastDataAt: time.Now(),
 		follow:     true,
 		now:        time.Now(),
+		hostFocus:  hostFocusViewport,
 	}
 	m.autoColor.DisableAutoColor = false
 	m.panic = decode.PanicDecoder{ElfPath: cfg.ElfPath, ToolchainPrefix: cfg.ToolchainPrefix}
@@ -84,7 +110,7 @@ func (m *monitorModel) setSize(sz size) {
 	// - 1 line input/help
 	// - remaining: viewport
 	vh := max(1, sz.H-3)
-	m.viewport.Width = max(1, sz.W)
+	m.viewport.Width = max(1, m.viewportWidthFor(sz))
 	m.viewport.Height = vh
 
 	fieldW := max(1, sz.W-4) // "> " + "[ ]"
@@ -102,26 +128,72 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		if t.String() == "ctrl+t" {
 			if curMode == modeHost {
 				m.follow = true
+				m.showInspector = false
+				m.hostFocus = hostFocusViewport
 				return m, nil, monitorAction{kind: monitorActionModeChanged, mode: modeDevice}
 			}
 			m.follow = false
+			m.hostFocus = hostFocusViewport
 			return m, nil, monitorAction{kind: monitorActionModeChanged, mode: modeHost}
 		}
 
 		if curMode == modeHost {
+			// Host-mode inspector toggle.
+			if t.String() == "i" {
+				m.showInspector = !m.showInspector
+				if !m.showInspector {
+					m.hostFocus = hostFocusViewport
+				}
+				m.setSize(m.sz)
+				return m, nil, monitorAction{}
+			}
+
+			if m.showInspector && t.Type == tea.KeyTab {
+				if m.hostFocus == hostFocusViewport {
+					m.hostFocus = hostFocusInspector
+				} else {
+					m.hostFocus = hostFocusViewport
+				}
+				return m, nil, monitorAction{}
+			}
+
 			switch t.Type {
 			case tea.KeyPgUp:
-				m.viewport.LineUp(10)
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.LineUp(10)
+				} else {
+					m.selectedEvent = clamp(m.selectedEvent-10, 0, max(0, len(m.events)-1))
+				}
 			case tea.KeyPgDown:
-				m.viewport.LineDown(10)
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.LineDown(10)
+				} else {
+					m.selectedEvent = clamp(m.selectedEvent+10, 0, max(0, len(m.events)-1))
+				}
 			case tea.KeyUp:
-				m.viewport.LineUp(1)
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.LineUp(1)
+				} else {
+					m.selectedEvent = clamp(m.selectedEvent-1, 0, max(0, len(m.events)-1))
+				}
 			case tea.KeyDown:
-				m.viewport.LineDown(1)
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.LineDown(1)
+				} else {
+					m.selectedEvent = clamp(m.selectedEvent+1, 0, max(0, len(m.events)-1))
+				}
 			case tea.KeyHome:
-				m.viewport.GotoTop()
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.GotoTop()
+				} else {
+					m.selectedEvent = 0
+				}
 			case tea.KeyEnd:
-				m.viewport.GotoBottom()
+				if m.hostFocus == hostFocusViewport {
+					m.viewport.GotoBottom()
+				} else {
+					m.selectedEvent = max(0, len(m.events)-1)
+				}
 			}
 			if t.String() == "G" || t.String() == "g" {
 				m.follow = true
@@ -153,6 +225,8 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 
 		if g := m.gdb.Push(t.b); g != nil {
 			m.append([]byte("--- GDB stub detected\n"))
+			m.addEvent("gdb", "GDB stub detected", string(g.Payload))
+			m.setToast("GDB stub detected (HOST mode: press i for inspector)", 3*time.Second)
 		}
 
 		lines := m.lineSplitter.Push(t.b)
@@ -167,11 +241,17 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			}
 			for _, e := range events {
 				m.append(e)
+				if bytes.HasPrefix(e, []byte("--- Core dump")) {
+					m.addEvent("coredump", "Core dump event", string(e))
+					m.setToast("Core dump event captured (HOST mode: press i for inspector)", 3*time.Second)
+				}
 			}
 
 			// panic backtrace decode is opportunistic: if the line contains Backtrace:, emit extra decoded lines.
 			if decoded, ok := m.panic.DecodeBacktraceLine(line); ok && len(decoded) > 0 {
 				m.append(decoded)
+				m.addEvent("panic", "Backtrace decoded", string(decoded))
+				m.setToast("Backtrace decoded (HOST mode: press i for inspector)", 3*time.Second)
 			}
 
 			m.append(m.autoColor.ColorizeLine(line))
@@ -193,6 +273,10 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 
 	case tickMsg:
 		m.now = t.t
+		if m.toastText != "" && !m.toastUntil.IsZero() && m.now.After(m.toastUntil) {
+			m.toastText = ""
+			m.toastUntil = time.Time{}
+		}
 		// finalize tail if idle
 		if time.Since(m.lastDataAt) > 250*time.Millisecond {
 			if tail := m.lineSplitter.FinalizeTail(); len(tail) > 0 {
@@ -219,18 +303,40 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 
 	status := padOrTrim(st.StatusBar.Render(m.renderStatus(curMode)), sz.W)
 
-	body := m.viewport.View()
-	body = lipgloss.NewStyle().Width(sz.W).Height(max(1, sz.H-3)).Render(body)
+	bodyH := max(1, sz.H-3)
+	vw := max(1, m.viewportWidthFor(sz))
+	vp := m.viewport
+	vp.Width = vw
+	vp.Height = bodyH
+	body := vp.View()
+	body = lipgloss.NewStyle().Width(vw).Height(bodyH).Render(body)
+
+	main := body
+	if curMode == modeHost && m.showInspector && sz.W >= 100 {
+		panelW := max(32, min(54, sz.W/3))
+		main = lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			lipgloss.NewStyle().Width(sz.W-panelW-1).Render(body),
+			lipgloss.NewStyle().Width(panelW).Render(m.renderInspectorPanel(st, size{W: panelW, H: bodyH})),
+		)
+	}
 
 	footer := ""
 	if curMode == modeHost {
-		footer = padOrTrim("Ctrl-T: HOST COMMANDS   PgUp/PgDn scroll   G: resume follow", sz.W)
+		footerText := "Ctrl-T: DEVICE   PgUp/PgDn scroll   G: resume follow   i: inspector"
+		if m.showInspector {
+			footerText += "   Tab: focus"
+		}
+		if m.toastText != "" {
+			footerText += "   " + m.toastText
+		}
+		footer = padOrTrim(footerText, sz.W)
 	} else {
 		field := padOrTrim(m.input.View(), max(0, sz.W-4))
 		footer = padOrTrim("> ["+field+"]", sz.W)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, body, status, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, title, main, status, footer)
 }
 
 func (m monitorModel) renderTitle() string {
@@ -259,9 +365,14 @@ func (m monitorModel) renderStatus(curMode mode) string {
 		capture = "CORE"
 	}
 	buf := fmt.Sprintf("%dK/1M", len(m.out)/1024)
-	return fmt.Sprintf("Mode: %s │ Follow: %s │ Capture: %s │ Filter: — │ Search: — │ Buf: %s │ %s",
+	ins := "OFF"
+	if m.showInspector && curMode == modeHost {
+		ins = "ON"
+	}
+	return fmt.Sprintf("Mode: %s │ Follow: %s │ Inspect: %s │ Capture: %s │ Filter: — │ Search: — │ Buf: %s │ %s",
 		modeStr,
 		followStr,
+		ins,
 		capture,
 		buf,
 		m.now.Format("15:04:05"),
@@ -299,4 +410,96 @@ func (m monitorModel) tickCmd() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg{t: t}
 	})
+}
+
+func (m *monitorModel) addEvent(kind, title, body string) {
+	if body == "" {
+		body = title
+	}
+	m.events = append(m.events, monitorEvent{
+		At:    time.Now(),
+		Kind:  kind,
+		Title: title,
+		Body:  body,
+	})
+	const maxEvents = 200
+	if len(m.events) > maxEvents {
+		m.events = append([]monitorEvent{}, m.events[len(m.events)-maxEvents:]...)
+		m.selectedEvent = clamp(m.selectedEvent, 0, max(0, len(m.events)-1))
+	}
+	if len(m.events) == 1 {
+		m.selectedEvent = 0
+	}
+}
+
+func (m *monitorModel) setToast(text string, d time.Duration) {
+	if d <= 0 {
+		m.toastText = ""
+		m.toastUntil = time.Time{}
+		return
+	}
+	m.toastText = text
+	m.toastUntil = time.Now().Add(d)
+}
+
+func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
+	if sz.W < 10 || sz.H < 4 {
+		return ""
+	}
+	if len(m.events) == 0 {
+		return st.Panel.Width(sz.W).Height(sz.H).Render(st.Hint.Render("No events yet."))
+	}
+
+	header := st.PanelTitle.Render("Inspector")
+	focus := "view"
+	if m.hostFocus == hostFocusInspector {
+		focus = "inspector"
+	}
+	sub := st.Hint.Render(fmt.Sprintf("focus: %s  events:%d", focus, len(m.events)))
+
+	listH := max(3, sz.H-6)
+	start := 0
+	if m.selectedEvent >= listH {
+		start = m.selectedEvent - listH + 1
+	}
+	end := min(len(m.events), start+listH)
+
+	var rows []string
+	for i := start; i < end; i++ {
+		e := m.events[i]
+		prefix := fmt.Sprintf("%s %-7s ", e.At.Format("15:04:05"), e.Kind)
+		line := padOrTrim(prefix+e.Title, max(0, sz.W-st.Panel.GetHorizontalBorderSize()-2))
+		if i == m.selectedEvent {
+			line = st.SelectedRow.Render(line)
+		} else {
+			line = st.Row.Render(line)
+		}
+		rows = append(rows, line)
+	}
+	for len(rows) < listH {
+		rows = append(rows, "")
+	}
+
+	body := stringsJoinVertical(rows)
+
+	detail := ""
+	if m.selectedEvent >= 0 && m.selectedEvent < len(m.events) {
+		detail = m.events[m.selectedEvent].Body
+	}
+	detail = padOrTrim(detail, max(0, sz.W-st.Panel.GetHorizontalBorderSize()-2))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, header, sub, "", body, "", detail)
+	return st.Panel.Width(sz.W).Height(sz.H).Render(content)
+}
+
+func (m monitorModel) viewportWidthFor(sz size) int {
+	if m.showInspector && sz.W >= 100 {
+		panelW := max(32, min(54, sz.W/3))
+		return max(1, sz.W-panelW-1)
+	}
+	return max(1, sz.W)
+}
+
+func stringsJoinVertical(lines []string) string {
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
