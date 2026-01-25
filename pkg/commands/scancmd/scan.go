@@ -46,13 +46,15 @@ func NewScanCommand() (*ScanCommand, error) {
 		cmds.WithLong(`
 Scan serial consoles on Linux, and score devices that look like Espressif chips.
 
-Use --probe-esptool for authoritative identification (WARNING: may reset device).
+By default, scan probes chip identity via esptool for authoritative identification
+(WARNING: may reset device). Disable with --probe-esptool=false.
 
 Examples:
   esper scan
   esper scan --all
-  esper scan --probe-esptool --output json
-  esper scan --probe-esptool --fields preferred_path,vidpid,chip_description,usb_mode
+  esper scan --output json
+  esper scan --fields preferred_path,vidpid,chip_description,usb_mode
+  esper scan --probe-esptool=false
 `),
 		cmds.WithFlags(
 			fields.New("all",
@@ -67,8 +69,8 @@ Examples:
 			),
 			fields.New("probe-esptool",
 				fields.TypeBool,
-				fields.WithDefault(false),
-				fields.WithHelp("Probe chip identity via esptool (WARNING: may reset device into download mode)"),
+				fields.WithDefault(true),
+				fields.WithHelp("Probe chip identity via esptool (WARNING: may reset device into download mode). Disable with --probe-esptool=false"),
 			),
 			fields.New("esptool-connect-mode",
 				fields.TypeString,
