@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-go-golems/esper/pkg/decode"
 	"github.com/go-go-golems/esper/pkg/parse"
@@ -31,6 +32,8 @@ type model struct {
 	lastDataAt time.Time
 
 	out string
+
+	input textinput.Model
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -52,6 +55,12 @@ func Run(ctx context.Context, cfg Config) error {
 	m.panic = decode.PanicDecoder{ElfPath: cfg.ElfPath, ToolchainPrefix: cfg.ToolchainPrefix}
 	m.coredump = decode.CoreDumpDecoder{ElfPath: cfg.ElfPath}
 
+	ti := textinput.New()
+	ti.Prompt = "esper> "
+	ti.Placeholder = "help | logdemo | partial | coredumpfake | gdbstub | panic"
+	ti.Focus()
+	m.input = ti
+
 	prog := tea.NewProgram(m, tea.WithContext(ctx))
 	_, runErr := prog.Run()
 	return runErr
@@ -67,16 +76,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if t.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
-		// Minimal: send printable runes and Enter to device; ignore other keys for now.
-		switch t.Type {
-		case tea.KeyEnter:
-			_, _ = m.port.Write([]byte("\r\n"))
-		default:
-			if s := t.String(); len(s) == 1 {
-				_, _ = m.port.Write([]byte(s))
+		if t.Type == tea.KeyEnter {
+			line := m.input.Value()
+			m.input.SetValue("")
+			if line != "" {
+				_, _ = m.port.Write([]byte(line))
 			}
+			_, _ = m.port.Write([]byte("\r\n"))
+			return m, nil
 		}
-		return m, nil
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	case serialChunkMsg:
 		if len(t.b) == 0 {
 			return m, m.readSerialCmd()
@@ -128,9 +139,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) View() string {
 	if m.out == "" {
-		return "esper: connected (Ctrl-C to exit)\n"
+		return "esper: connected (Ctrl-C to exit)\n\n" + m.input.View() + "\n"
 	}
-	return m.out
+	return m.out + "\n" + m.input.View() + "\n"
 }
 
 func (m *model) append(b []byte) {
