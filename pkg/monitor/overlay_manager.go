@@ -29,6 +29,14 @@ func openOverlayCmd(overlay overlayModel) tea.Cmd {
 	}
 }
 
+type closeOverlayMsg struct{}
+
+func closeOverlayCmd() tea.Cmd {
+	return func() tea.Msg {
+		return closeOverlayMsg{}
+	}
+}
+
 // renderOverlayOver dims the background and places the overlay box centered within the
 // given size. This uses lipgloss placement and line replacement (Bubble Tea can't truly
 // "layer" strings).

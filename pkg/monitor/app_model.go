@@ -102,6 +102,23 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Overlay open/close requests should be handled regardless of current overlay state.
+	switch msg := msg.(type) {
+	case openOverlayMsg:
+		if msg.overlay == nil {
+			return m, nil
+		}
+		m.overlay = msg.overlay
+		m.overlay.setSize(m.innerSize())
+		m.overlay.open()
+		return m, nil
+	case closeOverlayMsg:
+		m.overlay = nil
+		return m, nil
+	default:
+		// fall through
+	}
+
 	// Global keys.
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.Type {
@@ -131,18 +148,13 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd2 := m.routeToScreen(out.forward)
 			return m, tea.Batch(cmd1, cmd2)
 		}
-		return m, nil
+
+		// Non-key messages must continue to flow to the active screen (e.g. serial/tick),
+		// otherwise "auto overlays" (like core dump capture progress) would deadlock.
+		return m, m.routeToScreen(msg)
 	}
 
 	switch msg := msg.(type) {
-	case openOverlayMsg:
-		if msg.overlay == nil {
-			return m, nil
-		}
-		m.overlay = msg.overlay
-		m.overlay.setSize(m.innerSize())
-		m.overlay.open()
-		return m, nil
 	case portsScanResultMsg:
 		m.portPicker.applyScanResult(msg)
 		return m, nil
