@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/go-go-golems/esper/pkg/devices"
 	"github.com/go-go-golems/esper/pkg/scan"
 )
 
@@ -43,6 +44,8 @@ type portPickerModel struct {
 	toolchainPrefix string
 	probeEsptool    bool
 
+	nickByUSBSerial map[string]string
+
 	errBanner string
 	errHint   string
 }
@@ -59,13 +62,15 @@ func newPortPickerModel(cfg portPickerConfig) portPickerModel {
 		}
 	}
 
-	return portPickerModel{
+	m := portPickerModel{
 		focus:           focusPortList,
 		bauds:           bauds,
 		baudIdx:         idx,
 		elfPath:         cfg.defaultElfPath,
 		toolchainPrefix: cfg.defaultToolchain,
 	}
+	m.reloadRegistry()
+	return m
 }
 
 func (m *portPickerModel) setSize(sz size) {
@@ -95,6 +100,35 @@ func (m *portPickerModel) applyScanResult(msg portsScanResultMsg) {
 
 	m.ports = msg.ports
 	m.portList.SetLen(len(m.ports))
+	m.reloadRegistry()
+}
+
+func (m *portPickerModel) reloadRegistry() {
+	reg, _, err := devices.Load()
+	if err != nil {
+		m.nickByUSBSerial = nil
+		return
+	}
+	m.nickByUSBSerial = make(map[string]string, len(reg.Devices))
+	for _, d := range reg.Devices {
+		usb := strings.TrimSpace(d.USBSerial)
+		if usb == "" {
+			continue
+		}
+		nn := strings.TrimSpace(d.Nickname)
+		if nn == "" {
+			continue
+		}
+		m.nickByUSBSerial[usb] = nn
+	}
+}
+
+func (m portPickerModel) selectedPort() *scan.Port {
+	i := m.portList.Selected
+	if i < 0 || i >= len(m.ports) {
+		return nil
+	}
+	return &m.ports[i]
 }
 
 type portPickerActionKind int
@@ -226,7 +260,7 @@ func (m portPickerModel) View(st styles, sz size) string {
 	panel := st.Panel.Width(panelInner.W).Height(panelInner.H).Render(m.renderPanel(st, panelInner))
 	sections = append(sections, sz.PlaceCentered(panel))
 
-	help := st.StatusBar.Render("↑↓ Navigate   Tab Next field   Enter Connect   r Rescan   ? Help   q Quit")
+	help := st.StatusBar.Render("↑↓ Navigate   Tab Next field   Enter Connect   n Nickname   d Device Manager   r Rescan   ? Help   q Quit")
 	sections = append(sections, padOrTrim(help, sz.W))
 
 	return lipgloss.JoinVertical(lipgloss.Left, padOrTrim(title, sz.W), lipgloss.JoinVertical(lipgloss.Left, sections...))
@@ -270,6 +304,11 @@ func (m portPickerModel) renderPortList(st styles, w, h int) []string {
 		}
 
 		nick := "—"
+		if m.nickByUSBSerial != nil {
+			if nn := strings.TrimSpace(m.nickByUSBSerial[strings.TrimSpace(p.Serial)]); nn != "" {
+				nick = nn
+			}
+		}
 		name := portName(p)
 		chip := portChip(p)
 		star := " "

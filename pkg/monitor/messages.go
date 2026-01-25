@@ -78,6 +78,8 @@ type serialErrMsg struct{ err error }
 type tickMsg struct{ t time.Time }
 type resetDeviceMsg struct{}
 type resetResultMsg struct{ err error }
+type devicesRegistryChangedMsg struct{}
+type removeDeviceEntryMsg struct{ usbSerial string }
 
 type serialSession struct {
 	port     serial.Port

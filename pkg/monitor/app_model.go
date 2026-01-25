@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/go-go-golems/esper/pkg/devices"
 )
 
 type screen int
@@ -14,6 +15,7 @@ type screen int
 const (
 	screenPortPicker screen = iota
 	screenMonitor
+	screenDeviceManager
 )
 
 type mode int
@@ -41,6 +43,7 @@ type appModel struct {
 
 	portPicker portPickerModel
 	monitor    monitorModel
+	deviceMgr  deviceManagerModel
 
 	initialConnect *connectParams
 }
@@ -59,6 +62,7 @@ func newAppModel(ctx context.Context, cfg Config) *appModel {
 		defaultElfPath:   cfg.ElfPath,
 		defaultToolchain: cfg.ToolchainPrefix,
 	})
+	m.deviceMgr = newDeviceManagerModel()
 
 	// If a port is provided, optimistically connect; on failure we fall back to port picker with error.
 	if cfg.Port != "" {
@@ -96,6 +100,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		inner := m.innerSize()
 		m.portPicker.setSize(inner)
 		m.monitor.setSize(inner)
+		m.deviceMgr.setSize(inner)
 		if m.overlay != nil {
 			m.overlay.setSize(inner)
 		}
@@ -135,32 +140,45 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.overlay.open()
 			return m, nil
 		}
-	}
 
-	// Overlay captures input first.
-	if m.overlay != nil {
-		if k, ok := msg.(tea.KeyMsg); ok {
-			ov, cmd1, out := m.overlay.Update(k)
-			m.overlay = ov
-			if k.Type == tea.KeyEsc {
-				out.close = true
+		// Port picker shortcuts.
+		if m.overlay == nil && m.screen == screenPortPicker {
+			switch k.String() {
+			case "d":
+				m.screen = screenDeviceManager
+				m.deviceMgr.setSize(m.innerSize())
+				m.deviceMgr.open()
+				return m, m.deviceMgr.scanPortsCmd(m.ctx)
+			case "n":
+				if p := m.portPicker.selectedPort(); p != nil && strings.TrimSpace(p.Serial) != "" {
+					entry := devices.DeviceEntry{
+						USBSerial:     strings.TrimSpace(p.Serial),
+						Name:          strings.TrimSpace(p.Product),
+						PreferredPath: strings.TrimSpace(p.PreferredPath),
+					}
+					m.overlay = newDeviceEditOverlay(deviceEditOverlayConfig{
+						title:          "Assign Nickname",
+						isEdit:         false,
+						entry:          entry,
+						fixedUSBSerial: entry.USBSerial,
+					})
+					m.overlay.setSize(m.innerSize())
+					m.overlay.open()
+					return m, nil
+				}
 			}
-			if out.close {
-				m.overlay = nil
-			}
-
-			cmd2 := m.routeToScreen(out.forward)
-			return m, tea.Batch(cmd1, cmd2)
 		}
-
-		// Non-key messages must continue to flow to the active screen (e.g. serial/tick),
-		// otherwise "auto overlays" (like core dump capture progress) would deadlock.
-		return m, m.routeToScreen(msg)
 	}
 
+	// Handle non-key messages that must be processed regardless of overlays.
 	switch msg := msg.(type) {
 	case portsScanResultMsg:
-		m.portPicker.applyScanResult(msg)
+		switch m.screen {
+		case screenPortPicker:
+			m.portPicker.applyScanResult(msg)
+		case screenDeviceManager:
+			m.deviceMgr.applyScanResult(msg)
+		}
 		return m, nil
 	case connectResultMsg:
 		if msg.err != nil {
@@ -190,6 +208,50 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = nil
 		m.screen = screenPortPicker
 		return m, m.portPicker.scanPortsCmd(m.ctx)
+	case devicesRegistryChangedMsg:
+		m.portPicker.reloadRegistry()
+		m.deviceMgr.reloadRegistry()
+		return m, nil
+	case removeDeviceEntryMsg:
+		reg, _, err := devices.Load()
+		if err != nil {
+			m.deviceMgr.err = fmt.Sprintf("registry load failed: %v", err)
+			return m, nil
+		}
+		if !reg.RemoveByUSBSerial(msg.usbSerial) {
+			m.deviceMgr.err = fmt.Sprintf("no entry with usb_serial=%q", msg.usbSerial)
+			return m, nil
+		}
+		if _, err := devices.Save(reg); err != nil {
+			m.deviceMgr.err = fmt.Sprintf("registry save failed: %v", err)
+			return m, nil
+		}
+		m.portPicker.reloadRegistry()
+		m.deviceMgr.reloadRegistry()
+		return m, nil
+	default:
+		// fall through
+	}
+
+	// Overlay captures input first.
+	if m.overlay != nil {
+		if k, ok := msg.(tea.KeyMsg); ok {
+			ov, cmd1, out := m.overlay.Update(k)
+			m.overlay = ov
+			if k.Type == tea.KeyEsc {
+				out.close = true
+			}
+			if out.close {
+				m.overlay = nil
+			}
+
+			cmd2 := m.routeToScreen(out.forward)
+			return m, tea.Batch(cmd1, cmd2)
+		}
+
+		// Non-key messages must continue to flow to the active screen (e.g. serial/tick),
+		// otherwise "auto overlays" (like core dump capture progress) would deadlock.
+		return m, m.routeToScreen(msg)
 	}
 
 	// Screen-specific message routing.
@@ -202,6 +264,10 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mm, cmd, act := m.monitor.Update(msg, m.mode)
 		m.monitor = mm
 		return m, m.applyMonitorAction(act, cmd)
+	case screenDeviceManager:
+		dm, cmd, act := m.deviceMgr.Update(msg)
+		m.deviceMgr = dm
+		return m, m.applyDeviceManagerAction(act, cmd)
 	default:
 		return m, nil
 	}
@@ -220,6 +286,8 @@ func (m *appModel) View() string {
 		inner = m.portPicker.View(m.styles, innerSz)
 	case screenMonitor:
 		inner = m.monitor.View(m.styles, innerSz, m.mode)
+	case screenDeviceManager:
+		inner = m.deviceMgr.View(m.styles, innerSz)
 	default:
 		inner = "esper: unknown screen"
 	}
@@ -304,6 +372,42 @@ func (m *appModel) applyMonitorAction(act monitorAction, cmd tea.Cmd) tea.Cmd {
 	}
 }
 
+func (m *appModel) applyDeviceManagerAction(act deviceManagerAction, cmd tea.Cmd) tea.Cmd {
+	switch act.kind {
+	case deviceManagerActionNone:
+		if strings.TrimSpace(act.flashErrMsg) != "" {
+			m.deviceMgr.err = act.flashErrMsg
+		}
+		return cmd
+	case deviceManagerActionBack:
+		m.screen = screenPortPicker
+		return tea.Batch(cmd, m.portPicker.scanPortsCmd(m.ctx))
+	case deviceManagerActionRescan:
+		return tea.Batch(cmd, m.deviceMgr.scanPortsCmd(m.ctx))
+	case deviceManagerActionConnect:
+		cp := act.connect
+		if cp.baud == 0 {
+			cp.baud = m.cfg.Baud
+		}
+		if strings.TrimSpace(cp.elfPath) == "" {
+			cp.elfPath = m.cfg.ElfPath
+		}
+		if strings.TrimSpace(cp.toolchainPrefix) == "" {
+			cp.toolchainPrefix = m.cfg.ToolchainPrefix
+		}
+		return tea.Batch(cmd, connectCmd(m.ctx, cp))
+	case deviceManagerActionOpenOverlay:
+		if act.overlay != nil {
+			m.overlay = act.overlay
+			m.overlay.setSize(m.innerSize())
+			m.overlay.open()
+		}
+		return cmd
+	default:
+		return cmd
+	}
+}
+
 func (m *appModel) routeToScreen(msg tea.Msg) tea.Cmd {
 	if msg == nil {
 		return nil
@@ -318,6 +422,10 @@ func (m *appModel) routeToScreen(msg tea.Msg) tea.Cmd {
 		mm, cmd, act := m.monitor.Update(msg, m.mode)
 		m.monitor = mm
 		return m.applyMonitorAction(act, cmd)
+	case screenDeviceManager:
+		dm, cmd, act := m.deviceMgr.Update(msg)
+		m.deviceMgr = dm
+		return m.applyDeviceManagerAction(act, cmd)
 	default:
 		return nil
 	}
