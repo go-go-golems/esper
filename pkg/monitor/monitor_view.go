@@ -684,12 +684,20 @@ func (m monitorModel) renderStatus(curMode mode) string {
 
 func (m monitorModel) filterSummary() string {
 	cfg := m.filterCfg
-	enabled := cfg.levelE != true || cfg.levelW != true || cfg.levelI != true || cfg.include != nil || cfg.exclude != nil
+	def := defaultFilterConfig()
+	enabled := cfg.levelE != def.levelE ||
+		cfg.levelW != def.levelW ||
+		cfg.levelI != def.levelI ||
+		cfg.levelD != def.levelD ||
+		cfg.levelV != def.levelV ||
+		strings.TrimSpace(cfg.includeRaw) != "" ||
+		strings.TrimSpace(cfg.excludeRaw) != "" ||
+		len(cfg.rules) > 0
 	if !enabled {
 		return "—"
 	}
 	parts := []string{}
-	if !cfg.levelE || !cfg.levelW || !cfg.levelI {
+	if cfg.levelE != def.levelE || cfg.levelW != def.levelW || cfg.levelI != def.levelI || cfg.levelD != def.levelD || cfg.levelV != def.levelV {
 		lv := ""
 		if cfg.levelE {
 			lv += "E"
@@ -699,6 +707,12 @@ func (m monitorModel) filterSummary() string {
 		}
 		if cfg.levelI {
 			lv += "I"
+		}
+		if cfg.levelD {
+			lv += "D"
+		}
+		if cfg.levelV {
+			lv += "V"
 		}
 		if lv == "" {
 			lv = "∅"
@@ -710,6 +724,9 @@ func (m monitorModel) filterSummary() string {
 	}
 	if strings.TrimSpace(cfg.excludeRaw) != "" {
 		parts = append(parts, "exc:"+padOrTrim(cfg.excludeRaw, 16))
+	}
+	if len(cfg.rules) > 0 {
+		parts = append(parts, fmt.Sprintf("hl:%d", len(cfg.rules)))
 	}
 	if len(parts) == 0 {
 		return "ON"
@@ -870,19 +887,24 @@ func splitKeepNewline(s string) []string {
 }
 
 func (m *monitorModel) refreshViewportContent() {
-	lines := m.filteredLines()
+	baseLines := m.filteredLines()
 	if m.searchActive {
-		m.searchMatches = searchMatchesForLines(lines, m.searchQuery)
+		m.searchMatches = searchMatchesForLines(baseLines, m.searchQuery)
 		if len(m.searchMatches) == 0 {
 			m.searchCur = 0
 		} else if m.searchCur >= len(m.searchMatches) {
 			m.searchCur = 0
 		}
+	}
+
+	lines := applyHighlightRules(baseLines, m.filterCfg.rules)
+	if m.searchActive {
 		lines = m.decorateSearchLines(lines, m.viewportWidthFor(m.sz))
 	} else {
 		m.searchMatches = nil
 		m.searchCur = 0
 	}
+
 	m.viewport.SetContent(strings.Join(lines, ""))
 }
 
@@ -892,7 +914,14 @@ func (m monitorModel) filteredLines() []string {
 	}
 
 	cfg := m.filterCfg
-	enabled := cfg.levelE != true || cfg.levelW != true || cfg.levelI != true || cfg.include != nil || cfg.exclude != nil
+	def := defaultFilterConfig()
+	enabled := cfg.levelE != def.levelE ||
+		cfg.levelW != def.levelW ||
+		cfg.levelI != def.levelI ||
+		cfg.levelD != def.levelD ||
+		cfg.levelV != def.levelV ||
+		cfg.include != nil ||
+		cfg.exclude != nil
 	if !enabled {
 		return m.log
 	}
@@ -916,6 +945,14 @@ func (m monitorModel) filteredLines() []string {
 					}
 				case 'I':
 					if !cfg.levelI {
+						continue
+					}
+				case 'D':
+					if !cfg.levelD {
+						continue
+					}
+				case 'V':
+					if !cfg.levelV {
 						continue
 					}
 				}

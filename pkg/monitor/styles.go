@@ -16,6 +16,7 @@ type styles struct {
 	InputBox lipgloss.Style
 
 	ErrorBanner lipgloss.Style
+	InlineError lipgloss.Style
 	Hint        lipgloss.Style
 
 	OverlayDim  lipgloss.Style
@@ -51,6 +52,9 @@ func defaultStyles() styles {
 		ErrorBanner: lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder()).
 			Padding(0, 1),
+
+		InlineError: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("1")),
 
 		Hint: lipgloss.NewStyle().Faint(true),
 
