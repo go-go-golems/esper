@@ -269,6 +269,15 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 					m.eventList.SetLen(len(m.events))
 				}
 			}
+
+			if m.showInspector && m.hostFocus == hostFocusInspector && (t.Type == tea.KeyEnter || t.String() == "enter") {
+				i := m.eventList.Selected
+				if i >= 0 && i < len(m.events) {
+					return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newInspectorDetailOverlay(m.events[i])}
+				}
+				return m, nil, monitorAction{}
+			}
+
 			if t.String() == "G" || t.String() == "g" {
 				m.follow = true
 				m.viewport.GotoBottom()
@@ -358,6 +367,9 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 					if !res.DecodedOK && res.DecodeErr != "" {
 						body += "\nDecode error: " + res.DecodeErr
 					}
+					if strings.TrimSpace(string(res.Report)) != "" {
+						body += "\n\n" + strings.TrimSpace(string(res.Report))
+					}
 				} else if len(events) > 0 {
 					body = strings.TrimSpace(string(bytes.Join(events, nil)))
 				}
@@ -372,8 +384,10 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 
 			// panic backtrace decode is opportunistic: if the line contains Backtrace:, emit extra decoded lines.
 			if decoded, ok := m.panic.DecodeBacktraceLine(line); ok && len(decoded) > 0 {
+				raw := strings.TrimSpace(string(bytes.TrimRight(line, "\r\n")))
+				body := fmt.Sprintf("Raw Backtrace:\n%s\n\nDecoded Frames:\n%s", raw, strings.TrimSpace(string(decoded)))
 				m.append(decoded)
-				m.addEvent("panic", "Backtrace decoded", string(decoded))
+				m.addEvent("panic", "Backtrace decoded", body)
 				m.setToast("Backtrace decoded (HOST mode: press i for inspector)", 3*time.Second)
 			}
 
