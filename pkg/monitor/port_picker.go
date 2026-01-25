@@ -214,7 +214,7 @@ func (m portPickerModel) View(st styles, sz size) string {
 	var sections []string
 
 	if m.errBanner != "" {
-		b := st.ErrorBanner.Width(sz.W).Render(m.errBanner)
+		b := st.ErrorBanner.Width(max(0, sz.W-st.ErrorBanner.GetHorizontalBorderSize())).Render(m.errBanner)
 		if m.errHint != "" {
 			b = lipgloss.JoinVertical(lipgloss.Left, b, st.Hint.Render(m.errHint))
 		}
@@ -224,7 +224,8 @@ func (m portPickerModel) View(st styles, sz size) string {
 	panelW := min(sz.W, 78)
 	panelH := min(sz.H-2, 18)
 
-	panel := st.Panel.Width(panelW).Height(panelH).Render(m.renderPanel(st, size{W: panelW - st.Panel.GetHorizontalBorderSize(), H: panelH - st.Panel.GetVerticalBorderSize()}))
+	panelInner := size{W: panelW - st.Panel.GetHorizontalBorderSize(), H: panelH - st.Panel.GetVerticalBorderSize()}
+	panel := st.Panel.Width(panelInner.W).Height(panelInner.H).Render(m.renderPanel(st, panelInner))
 	sections = append(sections, sz.PlaceCentered(panel))
 
 	help := st.StatusBar.Render("↑↓ Navigate   Tab Next field   Enter Connect   r Rescan   ? Help   q Quit")

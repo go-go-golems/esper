@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -192,19 +193,28 @@ func (m *appModel) View() string {
 	}
 
 	inner := ""
+	innerSz := m.innerSize()
 	switch m.screen {
 	case screenPortPicker:
-		inner = m.portPicker.View(m.styles, m.innerSize())
+		inner = m.portPicker.View(m.styles, innerSz)
 	case screenMonitor:
-		inner = m.monitor.View(m.styles, m.innerSize(), m.mode)
+		inner = m.monitor.View(m.styles, innerSz, m.mode)
 	default:
 		inner = "esper: unknown screen"
 	}
 
+	// Defensive sizing: clamp inner to the exact content area size before applying the
+	// outer frame. lipgloss Width/Height are minimums, not maximums.
+	innerLines := splitLinesN(inner, innerSz.H)
+	for i := range innerLines {
+		innerLines[i] = padOrTrim(innerLines[i], innerSz.W)
+	}
+	inner = strings.Join(innerLines, "\n")
+
 	// Screen chrome: outer border around whole UI.
 	frame := m.styles.ScreenFrame.
-		Width(m.winW).
-		Height(m.winH).
+		Width(innerSz.W).
+		Height(innerSz.H).
 		Render(inner)
 
 	if m.overlay == overlayHelp {

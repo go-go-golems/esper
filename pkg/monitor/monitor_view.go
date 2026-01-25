@@ -13,6 +13,7 @@ import (
 	"github.com/go-go-golems/esper/pkg/decode"
 	"github.com/go-go-golems/esper/pkg/parse"
 	"github.com/go-go-golems/esper/pkg/render"
+	"github.com/muesli/reflow/truncate"
 )
 
 type monitorActionKind int
@@ -105,7 +106,7 @@ func newMonitorModel(cfg Config, session *serialSession) monitorModel {
 	m.coredump = decode.CoreDumpDecoder{ElfPath: cfg.ElfPath}
 	m.viewport = viewport.New(0, 0)
 	m.viewport.MouseWheelEnabled = false
-	m.viewport.HighPerformanceRendering = true
+	m.viewport.HighPerformanceRendering = false
 
 	ti := textinput.New()
 	ti.Prompt = ""
@@ -389,9 +390,11 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 		return st.Hint.Render("Terminal too small.")
 	}
 
-	title := padOrTrim(st.TitleBar.Render(m.renderTitle()), sz.W)
+	titleText := truncate.StringWithTail(m.renderTitle(), uint(sz.W), "…")
+	title := padOrTrim(st.TitleBar.Render(titleText), sz.W)
 
-	status := padOrTrim(st.StatusBar.Render(m.renderStatus(curMode)), sz.W)
+	statusText := truncate.StringWithTail(m.renderStatus(curMode), uint(sz.W), "…")
+	status := padOrTrim(st.StatusBar.Render(statusText), sz.W)
 
 	bodyH := max(1, sz.H-3)
 	vw := max(1, m.viewportWidthFor(sz))
@@ -420,10 +423,13 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 		if m.toastText != "" {
 			footerText += "   " + m.toastText
 		}
+		footerText = truncate.StringWithTail(footerText, uint(sz.W), "…")
 		footer = padOrTrim(footerText, sz.W)
 	} else {
 		field := padOrTrim(m.input.View(), max(0, sz.W-4))
-		footer = padOrTrim("> ["+field+"]", sz.W)
+		footerLine := "> [" + field + "]"
+		footerLine = truncate.StringWithTail(footerLine, uint(sz.W), "…")
+		footer = padOrTrim(footerLine, sz.W)
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, main, status, footer)
@@ -596,8 +602,10 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	if sz.W < 10 || sz.H < 4 {
 		return ""
 	}
+	panelInnerW := max(0, sz.W-st.Panel.GetHorizontalBorderSize())
+	panelInnerH := max(0, sz.H-st.Panel.GetVerticalBorderSize())
 	if len(m.events) == 0 {
-		return st.Panel.Width(sz.W).Height(sz.H).Render(st.Hint.Render("No events yet."))
+		return st.Panel.Width(panelInnerW).Height(panelInnerH).Render(st.Hint.Render("No events yet."))
 	}
 
 	header := st.PanelTitle.Render("Inspector")
@@ -607,7 +615,7 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	}
 	sub := st.Hint.Render(fmt.Sprintf("focus: %s  events:%d", focus, len(m.events)))
 
-	listH := max(3, sz.H-6)
+	listH := max(3, panelInnerH-6)
 	start := 0
 	if m.selectedEvent >= listH {
 		start = m.selectedEvent - listH + 1
@@ -618,7 +626,7 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	for i := start; i < end; i++ {
 		e := m.events[i]
 		prefix := fmt.Sprintf("%s %-7s ", e.At.Format("15:04:05"), e.Kind)
-		line := padOrTrim(prefix+e.Title, max(0, sz.W-st.Panel.GetHorizontalBorderSize()-2))
+		line := padOrTrim(prefix+e.Title, max(0, panelInnerW-2))
 		if i == m.selectedEvent {
 			line = st.SelectedRow.Render(line)
 		} else {
@@ -636,10 +644,10 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	if m.selectedEvent >= 0 && m.selectedEvent < len(m.events) {
 		detail = m.events[m.selectedEvent].Body
 	}
-	detail = padOrTrim(detail, max(0, sz.W-st.Panel.GetHorizontalBorderSize()-2))
+	detail = padOrTrim(detail, max(0, panelInnerW-2))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, sub, "", body, "", detail)
-	return st.Panel.Width(sz.W).Height(sz.H).Render(content)
+	return st.Panel.Width(panelInnerW).Height(panelInnerH).Render(content)
 }
 
 func (m monitorModel) viewportWidthFor(sz size) int {

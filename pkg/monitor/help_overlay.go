@@ -38,9 +38,11 @@ func (m helpOverlayModel) RenderOver(st styles, winW, winH int, background strin
 	boxH := min(18, max(10, innerH-6))
 
 	content := m.helpText(boxW - st.OverlayBox.GetHorizontalBorderSize())
+	boxInnerW := max(0, boxW-st.OverlayBox.GetHorizontalBorderSize())
+	boxInnerH := max(0, boxH-st.OverlayBox.GetVerticalBorderSize())
 	box := st.OverlayBox.
-		Width(boxW).
-		Height(boxH).
+		Width(boxInnerW).
+		Height(boxInnerH).
 		Render(content)
 
 	overlay := lipgloss.Place(winW, winH, lipgloss.Center, lipgloss.Center, box)
