@@ -15,6 +15,7 @@ const (
 	cmdOpenSearch
 	cmdOpenFilter
 	cmdToggleInspector
+	cmdResetDevice
 	cmdDisconnect
 	cmdClearViewport
 	cmdShowHelp
@@ -47,6 +48,7 @@ func newPaletteOverlayModel() paletteOverlayModel {
 		{Label: "Search log output", Shortcut: "/", Kind: cmdOpenSearch},
 		{Label: "Filter by level/regex", Shortcut: "f", Kind: cmdOpenFilter},
 		{Label: "Toggle Inspector", Shortcut: "i", Kind: cmdToggleInspector},
+		{Label: "Reset device", Shortcut: "reset", Kind: cmdResetDevice},
 		{Label: "Disconnect", Shortcut: "Ctrl-D", Kind: cmdDisconnect},
 		{Label: "Clear viewport", Shortcut: "Ctrl-L", Kind: cmdClearViewport},
 		{Label: "Help", Shortcut: "?", Kind: cmdShowHelp},

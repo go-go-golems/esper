@@ -76,10 +76,32 @@ type disconnectMsg struct {
 type serialChunkMsg struct{ b []byte }
 type serialErrMsg struct{ err error }
 type tickMsg struct{ t time.Time }
+type resetDeviceMsg struct{}
+type resetResultMsg struct{ err error }
 
 type serialSession struct {
 	port     serial.Port
 	portPath string
+}
+
+func (s *serialSession) ResetPulse() error {
+	if s == nil || s.port == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	// Best-effort reset pulse. On many ESP32 boards, RTS/DTR lines are wired to EN/BOOT.
+	// For USB Serial/JTAG, RTS is commonly mapped to reset behavior (as used by esptool).
+	if err := s.port.SetDTR(false); err != nil {
+		return err
+	}
+	if err := s.port.SetRTS(true); err != nil {
+		return err
+	}
+	time.Sleep(120 * time.Millisecond)
+	if err := s.port.SetRTS(false); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *serialSession) Close() error {

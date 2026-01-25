@@ -320,6 +320,22 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 	case paletteExecMsg:
 		return m, nil, m.execPalette(t.cmd)
 
+	case resetDeviceMsg:
+		if curMode != modeHost {
+			return m, nil, monitorAction{}
+		}
+		return m, m.resetDeviceCmd(), monitorAction{}
+
+	case resetResultMsg:
+		if t.err != nil {
+			m.addEvent("reset", "Reset failed", fmt.Sprintf("Reset failed: %v", t.err))
+			m.setToast(fmt.Sprintf("Reset failed: %v", t.err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.addEvent("reset", "Reset sent", "Sent reset pulse to device.")
+		m.setToast("Reset sent", 2*time.Second)
+		return m, nil, monitorAction{}
+
 	case serialChunkMsg:
 		if len(t.b) == 0 {
 			return m, m.readSerialCmd(), monitorAction{}
@@ -934,6 +950,8 @@ func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 		m.showInspector = !m.showInspector
 		m.setSize(m.sz)
 		return monitorAction{}
+	case cmdResetDevice:
+		return monitorAction{kind: monitorActionOpenOverlay, overlay: newResetConfirmOverlay()}
 	case cmdDisconnect:
 		return monitorAction{kind: monitorActionDisconnect, reason: "disconnect"}
 	case cmdClearViewport:
@@ -949,5 +967,14 @@ func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 		return monitorAction{kind: monitorActionQuit}
 	default:
 		return monitorAction{}
+	}
+}
+
+func (m monitorModel) resetDeviceCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.session == nil {
+			return resetResultMsg{err: fmt.Errorf("not connected")}
+		}
+		return resetResultMsg{err: m.session.ResetPulse()}
 	}
 }
