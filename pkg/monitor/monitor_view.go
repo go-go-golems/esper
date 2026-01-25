@@ -3,6 +3,8 @@ package monitor
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -88,6 +90,12 @@ type monitorModel struct {
 	searchQuery   string
 	searchMatches []int
 	searchCur     int
+
+	wrap bool
+
+	sessionLogOn   bool
+	sessionLogFile *os.File
+	sessionLogPath string
 
 	ctrlTPending   bool
 	ctrlTPendingID int
@@ -243,6 +251,34 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 				return m, nil, monitorAction{}
 			}
 
+			// HOST mode shortcuts (wireframe parity).
+			switch t.String() {
+			case "ctrl+r":
+				return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newResetConfirmOverlay()}
+			case "ctrl+s":
+				if err := m.toggleSessionLogging(); err != nil {
+					m.setToast(fmt.Sprintf("log: %v", err), 3*time.Second)
+				}
+				return m, nil, monitorAction{}
+			case "ctrl+l":
+				m.out = ""
+				m.log = nil
+				m.viewport.SetContent("")
+				m.events = nil
+				m.eventList.Selected = 0
+				m.setToast("viewport cleared", 2*time.Second)
+				return m, nil, monitorAction{}
+			case "w":
+				m.wrap = !m.wrap
+				m.refreshViewportContent()
+				if m.wrap {
+					m.setToast("wrap: ON", 2*time.Second)
+				} else {
+					m.setToast("wrap: OFF", 2*time.Second)
+				}
+				return m, nil, monitorAction{}
+			}
+
 			// Host-mode overlays.
 			switch t.String() {
 			case "/":
@@ -361,7 +397,8 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		return m, nil, monitorAction{}
 
 	case paletteExecMsg:
-		return m, nil, m.execPalette(t.cmd)
+		cmd, act := m.execPalette(t.kind)
+		return m, cmd, act
 
 	case resetDeviceMsg:
 		if curMode != modeHost {
@@ -377,6 +414,16 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		}
 		m.addEvent("reset", "Reset sent", "Sent reset pulse to device.")
 		m.setToast("Reset sent", 2*time.Second)
+		return m, nil, monitorAction{}
+
+	case sendBreakResultMsg:
+		if t.err != nil {
+			m.addEvent("break", "Send break failed", fmt.Sprintf("Send break failed: %v", t.err))
+			m.setToast(fmt.Sprintf("Send break failed: %v", t.err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.addEvent("break", "Send break", "Sent a serial break (palette execution).")
+		m.setToast("Sent break", 2*time.Second)
 		return m, nil, monitorAction{}
 
 	case serialChunkMsg:
@@ -761,6 +808,8 @@ func (m *monitorModel) append(b []byte) {
 	if len(m.out) > maxBytes {
 		m.out = m.out[len(m.out)-keepBytes:]
 	}
+
+	m.writeSessionLog(b)
 }
 
 func (m monitorModel) readSerialCmd() tea.Cmd {
@@ -898,6 +947,9 @@ func (m *monitorModel) refreshViewportContent() {
 	}
 
 	lines := applyHighlightRules(baseLines, m.filterCfg.rules)
+	if m.wrap && !m.searchActive {
+		lines = wrapViewportLines(lines, m.viewportWidthFor(m.sz))
+	}
 	if m.searchActive {
 		lines = m.decorateSearchLines(lines, m.viewportWidthFor(m.sz))
 	} else {
@@ -1035,34 +1087,50 @@ func (m *monitorModel) searchComputeMatches() {
 	}
 }
 
-func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
-	switch cmd.Kind {
+func (m *monitorModel) execPalette(kind paletteCommandKind) (tea.Cmd, monitorAction) {
+	switch kind {
 	case cmdOpenSearch:
 		m.openSearch()
-		return monitorAction{}
+		return nil, monitorAction{}
 	case cmdOpenFilter:
-		return monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
+		return nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
 	case cmdToggleInspector:
 		m.showInspector = !m.showInspector
 		m.setSize(m.sz)
-		return monitorAction{}
+		return nil, monitorAction{}
+	case cmdToggleWrap:
+		m.wrap = !m.wrap
+		m.refreshViewportContent()
+		if m.wrap {
+			m.setToast("wrap: ON", 2*time.Second)
+		} else {
+			m.setToast("wrap: OFF", 2*time.Second)
+		}
+		return nil, monitorAction{}
 	case cmdResetDevice:
-		return monitorAction{kind: monitorActionOpenOverlay, overlay: newResetConfirmOverlay()}
+		return nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newResetConfirmOverlay()}
+	case cmdSendBreak:
+		return m.sendBreakCmd(), monitorAction{}
 	case cmdDisconnect:
-		return monitorAction{kind: monitorActionDisconnect, reason: "disconnect"}
+		return nil, monitorAction{kind: monitorActionDisconnect, reason: "disconnect"}
 	case cmdClearViewport:
 		m.out = ""
 		m.log = nil
 		m.viewport.SetContent("")
 		m.events = nil
 		m.eventList.Selected = 0
-		return monitorAction{}
+		return nil, monitorAction{}
+	case cmdToggleSessionLog:
+		if err := m.toggleSessionLogging(); err != nil {
+			m.setToast(fmt.Sprintf("log: %v", err), 3*time.Second)
+		}
+		return nil, monitorAction{}
 	case cmdShowHelp:
-		return monitorAction{kind: monitorActionOpenOverlay, overlay: newHelpOverlay()}
+		return nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newHelpOverlay()}
 	case cmdQuit:
-		return monitorAction{kind: monitorActionQuit}
+		return nil, monitorAction{kind: monitorActionQuit}
 	default:
-		return monitorAction{}
+		return nil, monitorAction{}
 	}
 }
 
@@ -1219,5 +1287,63 @@ func (m monitorModel) resetDeviceCmd() tea.Cmd {
 			return resetResultMsg{err: fmt.Errorf("not connected")}
 		}
 		return resetResultMsg{err: m.session.ResetPulse()}
+	}
+}
+
+func (m monitorModel) sendBreakCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.session == nil {
+			return sendBreakResultMsg{err: fmt.Errorf("not connected")}
+		}
+		return sendBreakResultMsg{err: m.session.SendBreak(250 * time.Millisecond)}
+	}
+}
+
+func (m *monitorModel) toggleSessionLogging() error {
+	if m.sessionLogOn {
+		m.closeSessionLogging()
+		m.setToast("log: OFF", 2*time.Second)
+		return nil
+	}
+
+	dir, err := os.UserCacheDir()
+	if err != nil || strings.TrimSpace(dir) == "" {
+		dir = os.TempDir()
+	}
+	dir = filepath.Join(dir, "esper")
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return mkErr
+	}
+	path := filepath.Join(dir, fmt.Sprintf("session-%s.log", time.Now().Format("20060102-150405")))
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+
+	m.sessionLogOn = true
+	m.sessionLogFile = f
+	m.sessionLogPath = path
+	m.setToast("log: ON ("+filepath.Base(path)+")", 3*time.Second)
+	return nil
+}
+
+func (m *monitorModel) closeSessionLogging() {
+	if m.sessionLogFile != nil {
+		_ = m.sessionLogFile.Close()
+	}
+	m.sessionLogOn = false
+	m.sessionLogFile = nil
+	m.sessionLogPath = ""
+}
+
+func (m *monitorModel) writeSessionLog(b []byte) {
+	if !m.sessionLogOn || m.sessionLogFile == nil || len(b) == 0 {
+		return
+	}
+	if _, err := m.sessionLogFile.Write(b); err != nil {
+		// If the file goes bad (disk full, etc), stop logging to avoid repeated errors.
+		m.closeSessionLogging()
+		m.setToast(fmt.Sprintf("log write failed: %v", err), 3*time.Second)
 	}
 }

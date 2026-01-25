@@ -105,7 +105,7 @@ func (o *paletteOverlay) Update(msg tea.Msg) (overlayModel, tea.Cmd, overlayOutc
 	case paletteOverlayClose:
 		return o, cmd, overlayOutcome{close: true}
 	case paletteOverlayExec:
-		return o, cmd, overlayOutcome{close: true, forward: paletteExecMsg{cmd: res.cmd}}
+		return o, cmd, overlayOutcome{close: true, forward: paletteExecMsg{kind: res.cmd}}
 	default:
 		return o, cmd, overlayOutcome{}
 	}

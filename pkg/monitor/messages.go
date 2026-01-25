@@ -78,6 +78,8 @@ type serialErrMsg struct{ err error }
 type tickMsg struct{ t time.Time }
 type resetDeviceMsg struct{}
 type resetResultMsg struct{ err error }
+type sendBreakMsg struct{}
+type sendBreakResultMsg struct{ err error }
 type devicesRegistryChangedMsg struct{}
 type removeDeviceEntryMsg struct{ usbSerial string }
 
@@ -106,6 +108,13 @@ func (s *serialSession) ResetPulse() error {
 	return nil
 }
 
+func (s *serialSession) SendBreak(d time.Duration) error {
+	if s == nil || s.port == nil {
+		return fmt.Errorf("not connected")
+	}
+	return s.port.Break(d)
+}
+
 func (s *serialSession) Close() error {
 	if s == nil || s.port == nil {
 		return nil
@@ -132,5 +141,5 @@ type filterSetMsg struct {
 }
 
 type paletteExecMsg struct {
-	cmd paletteCommand
+	kind paletteCommandKind
 }

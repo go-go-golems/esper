@@ -327,6 +327,7 @@ func (m *appModel) innerSize() size {
 }
 
 func (m *appModel) close() {
+	m.monitor.closeSessionLogging()
 	if m.session != nil {
 		_ = m.session.Close()
 		m.session = nil
