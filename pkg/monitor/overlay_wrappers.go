@@ -1,8 +1,6 @@
 package monitor
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -32,63 +30,6 @@ func (o *helpOverlay) Update(msg tea.Msg) (overlayModel, tea.Cmd, overlayOutcome
 }
 
 func (o *helpOverlay) View(st styles) string {
-	return o.m.View(st)
-}
-
-type searchOverlay struct {
-	m            searchOverlayModel
-	initialQuery string
-}
-
-func newSearchOverlay(initialQuery string) *searchOverlay {
-	return &searchOverlay{
-		m:            newSearchOverlayModel(),
-		initialQuery: strings.TrimSpace(initialQuery),
-	}
-}
-
-func (o *searchOverlay) setSize(sz size) {
-	o.m.setSize(sz)
-}
-
-func (o *searchOverlay) open() {
-	if o.initialQuery != "" {
-		o.m.openFrom(o.initialQuery)
-		return
-	}
-	o.m.open()
-}
-
-func (o *searchOverlay) Update(msg tea.Msg) (overlayModel, tea.Cmd, overlayOutcome) {
-	k, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return o, nil, overlayOutcome{}
-	}
-	m2, cmd, res := o.m.Update(k)
-	o.m = m2
-
-	switch res.kind {
-	case searchOverlayClose:
-		return o, cmd, overlayOutcome{close: true}
-	case searchOverlayJump:
-		return o, cmd, overlayOutcome{
-			close:   true,
-			forward: searchActionMsg{kind: searchActionJump, query: strings.TrimSpace(o.m.query)},
-		}
-	case searchOverlayNext:
-		return o, cmd, overlayOutcome{
-			forward: searchActionMsg{kind: searchActionNext, query: strings.TrimSpace(o.m.query)},
-		}
-	case searchOverlayPrev:
-		return o, cmd, overlayOutcome{
-			forward: searchActionMsg{kind: searchActionPrev, query: strings.TrimSpace(o.m.query)},
-		}
-	default:
-		return o, cmd, overlayOutcome{}
-	}
-}
-
-func (o *searchOverlay) View(st styles) string {
 	return o.m.View(st)
 }
 

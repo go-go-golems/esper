@@ -82,6 +82,9 @@ type monitorModel struct {
 	toastUntil time.Time
 	toastText  string
 
+	searchActive bool
+	searchInput  textinput.Model
+
 	searchQuery   string
 	searchMatches []int
 	searchCur     int
@@ -115,6 +118,12 @@ func newMonitorModel(cfg Config, session *serialSession) monitorModel {
 	ti.Focus()
 	m.input = ti
 
+	si := textinput.New()
+	si.Prompt = ""
+	si.Placeholder = "Search..."
+	si.Blur()
+	m.searchInput = si
+
 	return m
 }
 
@@ -132,6 +141,7 @@ func (m *monitorModel) setSize(sz size) {
 
 	fieldW := max(1, sz.W-4) // "> " + "[ ]"
 	m.input.Width = max(1, fieldW-2)
+	m.searchInput.Width = max(10, sz.W-24)
 
 	m.viewport.SetContent(m.out)
 	if m.follow {
@@ -175,6 +185,46 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		}
 
 		if curMode == modeHost {
+			if m.searchActive {
+				switch t.Type {
+				case tea.KeyEsc:
+					m.closeSearch()
+					return m, nil, monitorAction{}
+				case tea.KeyEnter:
+					m.searchApplyJump()
+					return m, nil, monitorAction{}
+				}
+
+				switch t.String() {
+				case "n", "ctrl+n":
+					m.searchComputeMatches()
+					if len(m.searchMatches) == 0 {
+						m.setToast("no matches", 2*time.Second)
+						return m, nil, monitorAction{}
+					}
+					m.searchCur = searchNextIndex(m.searchCur, len(m.searchMatches))
+					return m, nil, monitorAction{}
+				case "N", "ctrl+p":
+					m.searchComputeMatches()
+					if len(m.searchMatches) == 0 {
+						m.setToast("no matches", 2*time.Second)
+						return m, nil, monitorAction{}
+					}
+					m.searchCur = searchPrevIndex(m.searchCur, len(m.searchMatches))
+					return m, nil, monitorAction{}
+				}
+
+				prevQuery := m.searchInput.Value()
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(t)
+				m.searchQuery = m.searchInput.Value()
+				if m.searchQuery != prevQuery {
+					m.searchCur = 0
+				}
+				m.searchComputeMatches()
+				return m, cmd, monitorAction{}
+			}
+
 			if m.ctrlTPending {
 				switch t.Type {
 				case tea.KeyEsc:
@@ -196,13 +246,18 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			// Host-mode overlays.
 			switch t.String() {
 			case "/":
-				return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newSearchOverlay(m.searchQuery)}
+				m.openSearch()
+				return m, nil, monitorAction{}
 			case "f":
 				return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
 			}
 
 			// Exit to device mode.
 			if t.Type == tea.KeyEsc {
+				if m.searchActive {
+					m.closeSearch()
+					return m, nil, monitorAction{}
+				}
 				m.ctrlTPending = false
 				m.follow = true
 				m.showInspector = false
@@ -299,18 +354,6 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(t)
 		return m, cmd, monitorAction{}
-
-	case searchActionMsg:
-		m.searchQuery = strings.TrimSpace(t.query)
-		switch t.kind {
-		case searchActionJump:
-			m.searchApplyJump()
-		case searchActionNext:
-			m.searchApplyNext()
-		case searchActionPrev:
-			m.searchApplyPrev()
-		}
-		return m, nil, monitorAction{}
 
 	case filterSetMsg:
 		m.filterCfg = t.cfg
@@ -470,6 +513,9 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 
 	statusText := truncate.StringWithTail(m.renderStatus(curMode), uint(sz.W), "…")
 	status := padOrTrim(st.StatusBar.Render(statusText), sz.W)
+	if curMode == modeHost && m.searchActive {
+		status = padOrTrim(st.StatusBar.Render(strings.Repeat("─", sz.W)), sz.W)
+	}
 
 	bodyH := max(1, sz.H-3)
 	vw := max(1, m.viewportWidthFor(sz))
@@ -493,15 +539,19 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 	if m.coredump.InProgress() {
 		footer = padOrTrim(st.Hint.Render("(input disabled during capture)"), sz.W)
 	} else if curMode == modeHost {
-		footerText := "Ctrl-T: DEVICE   Ctrl-T T: commands   PgUp/PgDn scroll   G: resume follow   / search   f filter   i inspector"
-		if m.showInspector {
-			footerText += "   Tab: focus"
+		if m.searchActive {
+			footer = padOrTrim(m.renderSearchBar(sz.W), sz.W)
+		} else {
+			footerText := "Ctrl-T: DEVICE   Ctrl-T T: commands   PgUp/PgDn scroll   G: resume follow   / search   f filter   i inspector"
+			if m.showInspector {
+				footerText += "   Tab: focus"
+			}
+			if m.toastText != "" {
+				footerText += "   " + m.toastText
+			}
+			footerText = truncate.StringWithTail(footerText, uint(sz.W), "…")
+			footer = padOrTrim(footerText, sz.W)
 		}
-		if m.toastText != "" {
-			footerText += "   " + m.toastText
-		}
-		footerText = truncate.StringWithTail(footerText, uint(sz.W), "…")
-		footer = padOrTrim(footerText, sz.W)
 	} else {
 		field := padOrTrim(m.input.View(), max(0, sz.W-4))
 		footerLine := "> [" + field + "]"
@@ -669,7 +719,7 @@ func (m monitorModel) filterSummary() string {
 
 func (m monitorModel) searchSummary() string {
 	q := strings.TrimSpace(m.searchQuery)
-	if q == "" {
+	if q == "" || !m.searchActive {
 		return "—"
 	}
 	return "/" + padOrTrim(q, 18)
@@ -820,7 +870,20 @@ func splitKeepNewline(s string) []string {
 }
 
 func (m *monitorModel) refreshViewportContent() {
-	m.viewport.SetContent(strings.Join(m.filteredLines(), ""))
+	lines := m.filteredLines()
+	if m.searchActive {
+		m.searchMatches = searchMatchesForLines(lines, m.searchQuery)
+		if len(m.searchMatches) == 0 {
+			m.searchCur = 0
+		} else if m.searchCur >= len(m.searchMatches) {
+			m.searchCur = 0
+		}
+		lines = m.decorateSearchLines(lines, m.viewportWidthFor(m.sz))
+	} else {
+		m.searchMatches = nil
+		m.searchCur = 0
+	}
+	m.viewport.SetContent(strings.Join(lines, ""))
 }
 
 func (m monitorModel) filteredLines() []string {
@@ -893,7 +956,9 @@ func (m *monitorModel) searchApplyJump() {
 		return
 	}
 	m.searchCur = clamp(m.searchCur, 0, len(m.searchMatches)-1)
-	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
+	lines := m.filteredLines()
+	lineIdx := m.searchMatches[m.searchCur]
+	m.viewport.YOffset = searchJumpTop(lineIdx, m.viewport.Height, len(lines))
 }
 
 func (m *monitorModel) searchApplyNext() {
@@ -902,8 +967,7 @@ func (m *monitorModel) searchApplyNext() {
 		m.setToast("no matches", 2*time.Second)
 		return
 	}
-	m.searchCur = (m.searchCur + 1) % len(m.searchMatches)
-	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
+	m.searchCur = searchNextIndex(m.searchCur, len(m.searchMatches))
 }
 
 func (m *monitorModel) searchApplyPrev() {
@@ -912,8 +976,7 @@ func (m *monitorModel) searchApplyPrev() {
 		m.setToast("no matches", 2*time.Second)
 		return
 	}
-	m.searchCur = (m.searchCur + len(m.searchMatches) - 1) % len(m.searchMatches)
-	m.viewport.YOffset = clamp(m.searchMatches[m.searchCur], 0, max(0, m.viewport.TotalLineCount()-1))
+	m.searchCur = searchPrevIndex(m.searchCur, len(m.searchMatches))
 }
 
 func (m *monitorModel) searchComputeMatches() {
@@ -925,12 +988,7 @@ func (m *monitorModel) searchComputeMatches() {
 	}
 
 	lines := m.filteredLines()
-	m.searchMatches = nil
-	for i, line := range lines {
-		if containsQuery(line, query) {
-			m.searchMatches = append(m.searchMatches, i)
-		}
-	}
+	m.searchMatches = searchMatchesForLines(lines, query)
 	if len(m.searchMatches) == 0 {
 		m.searchCur = 0
 		return
@@ -943,7 +1001,8 @@ func (m *monitorModel) searchComputeMatches() {
 func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 	switch cmd.Kind {
 	case cmdOpenSearch:
-		return monitorAction{kind: monitorActionOpenOverlay, overlay: newSearchOverlay(m.searchQuery)}
+		m.openSearch()
+		return monitorAction{}
 	case cmdOpenFilter:
 		return monitorAction{kind: monitorActionOpenOverlay, overlay: newFilterOverlay(m.filterCfg)}
 	case cmdToggleInspector:
@@ -968,6 +1027,153 @@ func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 	default:
 		return monitorAction{}
 	}
+}
+
+func (m *monitorModel) openSearch() {
+	m.searchActive = true
+	m.searchInput.SetValue(m.searchQuery)
+	m.searchInput.Focus()
+	m.searchCur = 0
+	m.searchComputeMatches()
+	m.refreshViewportContent()
+}
+
+func (m *monitorModel) closeSearch() {
+	m.searchActive = false
+	m.searchInput.Blur()
+	// Keep searchQuery around so reopening resumes the last query, but clear
+	// match decorations immediately.
+	m.refreshViewportContent()
+}
+
+func (m monitorModel) renderSearchBar(w int) string {
+	q := m.searchInput.Value()
+	matches := "—"
+	qTrim := strings.TrimSpace(q)
+	if qTrim != "" {
+		if len(m.searchMatches) == 0 {
+			matches = "0 matches"
+		} else {
+			matches = fmt.Sprintf("match %d/%d", clamp(m.searchCur, 0, len(m.searchMatches)-1)+1, len(m.searchMatches))
+		}
+	}
+	hint := "n:next N:prev  Enter:jump  Esc:close"
+	if m.toastText != "" {
+		hint += "   " + m.toastText
+	}
+
+	prefix := "Search: ["
+	suffix := "]"
+	sep := " │ "
+	right := suffix + sep + matches + sep + hint
+
+	queryW := w - ansiVisibleWidth(prefix) - ansiVisibleWidth(right)
+	if queryW < 1 {
+		queryW = 1
+	}
+
+	// Update input width so cursor rendering stays stable.
+	m.searchInput.Width = queryW
+	field := padOrTrim(m.searchInput.View(), queryW)
+
+	line := prefix + field + right
+	return truncate.StringWithTail(line, uint(w), "…")
+}
+
+func (m monitorModel) decorateSearchLines(lines []string, width int) []string {
+	q := strings.TrimSpace(m.searchQuery)
+	if q == "" || len(lines) == 0 || width <= 0 || len(m.searchMatches) == 0 {
+		return lines
+	}
+
+	total := len(m.searchMatches)
+	curOrd := clamp(m.searchCur, 0, total-1) + 1
+	orderByLine := make(map[int]int, total)
+	for i, li := range m.searchMatches {
+		orderByLine[li] = i + 1
+	}
+
+	markerStyle := lipgloss.NewStyle().Faint(true)
+	curMarkerStyle := lipgloss.NewStyle().Bold(true)
+	highlightStyle := lipgloss.NewStyle().Reverse(true)
+
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		nl := ""
+		if strings.HasSuffix(line, "\n") {
+			nl = "\n"
+			line = strings.TrimSuffix(line, "\n")
+		}
+
+		if ord, ok := orderByLine[i]; ok {
+			marker := fmt.Sprintf("← MATCH %d/%d", ord, total)
+			if ansiVisibleWidth(marker) > width-2 {
+				marker = "← MATCH"
+			}
+			if ord == curOrd {
+				marker = curMarkerStyle.Render(marker)
+			} else {
+				marker = markerStyle.Render(marker)
+			}
+
+			leftW := width - 1 - ansiVisibleWidth(marker)
+			if leftW < 0 {
+				leftW = 0
+			}
+
+			left := line
+			// Best-effort substring highlight: only attempt when the line has no ANSI of its own.
+			if !hasANSI(left) {
+				left = highlightPlainSubstring(left, q, highlightStyle)
+			}
+
+			left = ansiCutToWidth(left, leftW)
+			pad := leftW - ansiVisibleWidth(left)
+			if pad < 0 {
+				pad = 0
+			}
+
+			// Reset styles before padding/marker so we don't "inherit" log colors.
+			left = left + "\x1b[0m" + strings.Repeat(" ", pad) + " " + marker
+			out = append(out, left+nl)
+			continue
+		}
+
+		out = append(out, line+nl)
+	}
+	return out
+}
+
+func highlightPlainSubstring(s, query string, st lipgloss.Style) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return s
+	}
+	// Best-effort: only ASCII queries (avoids tricky Unicode case-fold length changes).
+	for _, r := range query {
+		if r > 127 {
+			return s
+		}
+	}
+
+	ls := strings.ToLower(s)
+	lq := strings.ToLower(query)
+	var out strings.Builder
+	out.Grow(len(s))
+
+	i := 0
+	for {
+		j := strings.Index(ls[i:], lq)
+		if j < 0 {
+			out.WriteString(s[i:])
+			break
+		}
+		j += i
+		out.WriteString(s[i:j])
+		out.WriteString(st.Render(s[j : j+len(query)]))
+		i = j + len(query)
+	}
+	return out.String()
 }
 
 func (m monitorModel) resetDeviceCmd() tea.Cmd {

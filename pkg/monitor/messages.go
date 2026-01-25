@@ -127,19 +127,6 @@ func (s *serialSession) WriteLine(line string) error {
 	return err
 }
 
-type searchActionKind int
-
-const (
-	searchActionJump searchActionKind = iota
-	searchActionNext
-	searchActionPrev
-)
-
-type searchActionMsg struct {
-	kind  searchActionKind
-	query string
-}
-
 type filterSetMsg struct {
 	cfg filterConfig
 }
