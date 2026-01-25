@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/go-go-golems/esper/pkg/devices"
 	"github.com/go-go-golems/esper/pkg/scan"
 	"github.com/go-go-golems/glazed/pkg/cli"
 	"github.com/go-go-golems/glazed/pkg/cmds"
@@ -116,8 +117,27 @@ func (c *ScanCommand) RunIntoGlazeProcessor(
 		return err
 	}
 
+	reg, _, regErr := devices.Load()
+	// Treat registry errors as non-fatal for scan output; scan itself should still work.
+	if regErr != nil {
+		reg = &devices.Registry{}
+	}
+
 	for _, p := range ports {
 		reasons := strings.Join(p.Reasons, "; ")
+
+		var (
+			nickname    string
+			deviceName  string
+			description string
+		)
+		if reg != nil && p.Serial != "" {
+			if e := reg.FindByUSBSerial(p.Serial); e != nil {
+				nickname = e.Nickname
+				deviceName = e.Name
+				description = e.Description
+			}
+		}
 
 		var (
 			esptoolOK          bool
@@ -146,6 +166,9 @@ func (c *ScanCommand) RunIntoGlazeProcessor(
 			types.MRP("device", p.Device),
 			types.MRP("by_id", p.ByID),
 			types.MRP("preferred_path", p.PreferredPath),
+			types.MRP("nickname", nickname),
+			types.MRP("device_name", deviceName),
+			types.MRP("device_description", description),
 			types.MRP("vid", p.VID),
 			types.MRP("pid", p.PID),
 			types.MRP("vidpid", p.VIDPID()),

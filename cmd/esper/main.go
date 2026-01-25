@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 
+	"github.com/go-go-golems/esper/pkg/commands/devicescmd"
 	"github.com/go-go-golems/esper/pkg/commands/scancmd"
+	"github.com/go-go-golems/esper/pkg/devices"
 	"github.com/go-go-golems/esper/pkg/monitor"
 	"github.com/go-go-golems/glazed/pkg/cli"
 	"github.com/go-go-golems/glazed/pkg/cmds/schema"
@@ -27,7 +31,20 @@ func main() {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return monitor.Run(cmd.Context(), monitorCfg)
+			cfg := monitorCfg
+			if cfg.Port != "" {
+				if runtime.GOOS == "linux" && !strings.Contains(cfg.Port, "/") && strings.HasPrefix(cfg.Port, "tty") {
+					cfg.Port = "/dev/" + cfg.Port
+				}
+				if !strings.Contains(cfg.Port, "/") && !strings.ContainsAny(cfg.Port, "*?[") && !strings.HasPrefix(cfg.Port, "tty") {
+					res, err := devices.ResolveNicknameToPort(cmd.Context(), cfg.Port)
+					if err != nil {
+						return err
+					}
+					cfg.Port = res.PortPath
+				}
+			}
+			return monitor.Run(cmd.Context(), cfg)
 		},
 	}
 
@@ -52,6 +69,13 @@ func main() {
 		os.Exit(1)
 	}
 	rootCmd.AddCommand(cobraScanCmd)
+
+	devicesCmd, err := devicescmd.NewDevicesCommand()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "esper: build devices command: %v\n", err)
+		os.Exit(1)
+	}
+	rootCmd.AddCommand(devicesCmd)
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "esper: %v\n", err)
