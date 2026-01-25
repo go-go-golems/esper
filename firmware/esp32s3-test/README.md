@@ -42,5 +42,6 @@ Then in the `esper` UI, type commands such as:
 - `partial`
 - `gdbstub`
 - `coredumpfake`
+- `coredumpfakeslow` (slow/long core dump markers; good for "capture in progress" UI)
+- `emitall` (emit logdemo+partial+gdbstub+coredumpfakeslow; optionally `emitall panic`)
 - `panic` (will crash/reboot)
-

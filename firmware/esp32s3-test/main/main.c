@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "sdkconfig.h"
@@ -7,8 +8,14 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "esper_test";
+
+static void delay_ms(uint32_t ms) {
+    vTaskDelay(pdMS_TO_TICKS(ms));
+}
 
 static int cmd_logdemo(int argc, char **argv) {
     (void)argc;
@@ -67,6 +74,53 @@ static int cmd_coredumpfake(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_coredumpfakeslow(int argc, char **argv) {
+    // Exercise core dump recognizers with a slow/long payload so a "capture in progress"
+    // overlay has time to be observed.
+    int lines = 200;
+    int delay_every = 10;
+    int delay_ms_each = 50;
+    if (argc >= 2) {
+        int v = atoi(argv[1]);
+        if (v > 0) lines = v;
+    }
+
+    printf("Press Enter to print core dump to UART...\n");
+    printf("================= CORE DUMP START =================\n");
+
+    for (int i = 0; i < lines; i++) {
+        // base64-ish payload (not a real core dump). Keep it single-line.
+        printf("Y29yZWR1bXAtc2xvdy1saW5lLTAwMDAwMDAwMDAwMDAwMC0lMDNkCg== %03d\n", i);
+        if (delay_every > 0 && (i % delay_every) == 0) {
+            delay_ms((uint32_t)delay_ms_each);
+        }
+    }
+
+    printf("================= CORE DUMP END =================\n");
+    return 0;
+}
+
+static int cmd_emitall(int argc, char **argv) {
+    // One-shot deterministic event suite. If the optional arg "panic" is provided,
+    // trigger panic last (device will reboot).
+    bool do_panic = false;
+    if (argc >= 2 && strcmp(argv[1], "panic") == 0) {
+        do_panic = true;
+    }
+
+    cmd_logdemo(0, NULL);
+    cmd_partial(0, NULL);
+    cmd_gdbstub(0, NULL);
+    // Keep capture-in-progress overlay visible for a moment.
+    char *slow_argv[] = {(char *)"coredumpfakeslow", (char *)"250"};
+    cmd_coredumpfakeslow(2, slow_argv);
+
+    if (do_panic) {
+        cmd_panic(0, NULL);
+    }
+    return 0;
+}
+
 static int cmd_panic(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -105,6 +159,8 @@ static void console_start(void) {
     register_cmd("partial", "Print a partial line (no newline for a bit)", &cmd_partial);
     register_cmd("gdbstub", "Emit a valid $T..#.. gdb stop-reason packet (for detection)", &cmd_gdbstub);
     register_cmd("coredumpfake", "Emit core dump markers + dummy base64 payload", &cmd_coredumpfake);
+    register_cmd("coredumpfakeslow", "Emit slow core dump markers + long dummy payload (for capture overlay)", &cmd_coredumpfakeslow);
+    register_cmd("emitall", "Emit logdemo+partial+gdbstub+coredumpfakeslow (optionally: emitall panic)", &cmd_emitall);
     register_cmd("panic", "Trigger abort() to generate a panic/backtrace", &cmd_panic);
 
     err = esp_console_start_repl(repl);
@@ -121,4 +177,3 @@ void app_main(void) {
     ESP_LOGI(TAG, "boot: esper test firmware");
     console_start();
 }
-
