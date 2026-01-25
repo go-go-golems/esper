@@ -78,6 +78,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case serialChunkMsg:
+		if len(t.b) == 0 {
+			return m, m.readSerialCmd()
+		}
 		m.lastDataAt = time.Now()
 
 		if g := m.gdb.Push(t.b); g != nil {
@@ -131,8 +134,13 @@ func (m *model) View() string {
 }
 
 func (m *model) append(b []byte) {
-	// Minimal, unbounded for now. We'll bound later once the core works.
 	m.out += string(b)
+	// Keep a bounded rolling buffer to avoid unbounded memory growth.
+	const max = 1 << 20  // 1 MiB
+	const keep = 1 << 19 // 512 KiB
+	if len(m.out) > max {
+		m.out = m.out[len(m.out)-keep:]
+	}
 }
 
 func (m *model) readSerialCmd() tea.Cmd {
@@ -142,8 +150,8 @@ func (m *model) readSerialCmd() tea.Cmd {
 		if err != nil {
 			return serialErrMsg{err: err}
 		}
-		if n == 0 {
-			return nil
+		if n <= 0 {
+			return serialChunkMsg{b: nil}
 		}
 		return serialChunkMsg{b: append([]byte{}, buf[:n]...)}
 	}
@@ -154,4 +162,3 @@ func (m *model) tickCmd() tea.Cmd {
 		return tickMsg{t: t}
 	})
 }
-
