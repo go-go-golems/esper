@@ -13,6 +13,8 @@
 
 static const char *TAG = "esper_test";
 
+static int cmd_panic(int argc, char **argv);
+
 static void delay_ms(uint32_t ms) {
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
