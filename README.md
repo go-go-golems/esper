@@ -44,3 +44,12 @@ go run ./cmd/esper tail \
   --toolchain-prefix xtensa-esp32s3-elf- \
   --timeout 10s
 ```
+
+Bidirectional (no TUI), raw stdin forwarding:
+
+```bash
+# Ctrl-] exits.
+go run ./cmd/esper tail \
+  --port '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*' \
+  --stdin-raw
+```

@@ -71,6 +71,7 @@ func main() {
 	tailCmd.Flags().StringVar(&tailCfg.Port, "port", "", "Serial port (or glob like /dev/serial/by-id/*; or a device nickname)")
 	tailCmd.Flags().IntVar(&tailCfg.Baud, "baud", 115200, "Baud rate")
 	tailCmd.Flags().DurationVar(&tailCfg.Timeout, "timeout", 0*time.Second, "Exit after this duration (0 = run until Ctrl-C)")
+	tailCmd.Flags().BoolVar(&tailCfg.StdinRaw, "stdin-raw", false, "Forward stdin to device as raw bytes (bidirectional). Ctrl-] exits.")
 	tailCmd.Flags().StringVar(&tailCfg.ElfPath, "elf", "", "Path to app ELF for decoding (optional)")
 	tailCmd.Flags().StringVar(&tailCfg.ToolchainPrefix, "toolchain-prefix", "", "Toolchain prefix (e.g. xtensa-esp32s3-elf-) for addr2line (optional)")
 
