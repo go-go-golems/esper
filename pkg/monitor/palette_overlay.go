@@ -34,7 +34,7 @@ type paletteOverlayModel struct {
 
 	all      []paletteCommand
 	filtered []paletteCommand
-	selected int
+	list     selectList
 }
 
 func newPaletteOverlayModel() paletteOverlayModel {
@@ -69,7 +69,7 @@ func (m *paletteOverlayModel) setSize(sz size) {
 func (m *paletteOverlayModel) open() {
 	m.input.SetValue("")
 	m.input.Focus()
-	m.selected = 0
+	m.list.Selected = 0
 	m.refilter()
 }
 
@@ -91,24 +91,22 @@ func (m paletteOverlayModel) Update(msg tea.KeyMsg) (paletteOverlayModel, tea.Cm
 	case tea.KeyEsc:
 		return m, nil, paletteOverlayResult{kind: paletteOverlayClose}
 	case tea.KeyUp:
-		m.selected = clamp(m.selected-1, 0, max(0, len(m.filtered)-1))
+		m.list.Move(-1, len(m.filtered))
 		return m, nil, paletteOverlayResult{}
 	case tea.KeyDown:
-		m.selected = clamp(m.selected+1, 0, max(0, len(m.filtered)-1))
+		m.list.Move(1, len(m.filtered))
 		return m, nil, paletteOverlayResult{}
 	case tea.KeyEnter:
 		if len(m.filtered) == 0 {
 			return m, nil, paletteOverlayResult{kind: paletteOverlayClose}
 		}
-		return m, nil, paletteOverlayResult{kind: paletteOverlayExec, cmd: m.filtered[m.selected]}
+		return m, nil, paletteOverlayResult{kind: paletteOverlayExec, cmd: m.filtered[m.list.Selected]}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.refilter()
-	if m.selected >= len(m.filtered) {
-		m.selected = max(0, len(m.filtered)-1)
-	}
+	m.list.SetLen(len(m.filtered))
 	return m, cmd, paletteOverlayResult{}
 }
 
@@ -137,7 +135,7 @@ func (m paletteOverlayModel) View(st styles) string {
 		label := padOrTrim(c.Label, max(10, m.sz.W-20))
 		short := st.Hint.Render(padOrTrim(c.Shortcut, 10))
 		line := label + " " + short
-		if i == m.selected {
+		if i == m.list.Selected {
 			line = st.SelectedRow.Render(line)
 		}
 		rows = append(rows, line)

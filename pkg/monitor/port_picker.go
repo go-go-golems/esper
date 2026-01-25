@@ -33,7 +33,7 @@ type portPickerModel struct {
 	sz size
 
 	ports    []scan.Port
-	selected int
+	portList selectList
 	focus    portPickerFocus
 
 	baudIdx int
@@ -94,9 +94,7 @@ func (m *portPickerModel) applyScanResult(msg portsScanResultMsg) {
 	m.errHint = ""
 
 	m.ports = msg.ports
-	if m.selected >= len(m.ports) {
-		m.selected = max(0, len(m.ports)-1)
-	}
+	m.portList.SetLen(len(m.ports))
 }
 
 type portPickerActionKind int
@@ -136,10 +134,10 @@ func (m portPickerModel) Update(msg tea.Msg) (portPickerModel, tea.Cmd, portPick
 		case focusPortList:
 			switch msg.Type {
 			case tea.KeyUp:
-				m.selected = clamp(m.selected-1, 0, max(0, len(m.ports)-1))
+				m.portList.Move(-1, len(m.ports))
 				return m, nil, portPickerAction{}
 			case tea.KeyDown:
-				m.selected = clamp(m.selected+1, 0, max(0, len(m.ports)-1))
+				m.portList.Move(1, len(m.ports))
 				return m, nil, portPickerAction{}
 			case tea.KeyEnter:
 				return m, nil, m.connectAction()
@@ -176,10 +174,10 @@ func (m portPickerModel) Update(msg tea.Msg) (portPickerModel, tea.Cmd, portPick
 
 func (m portPickerModel) connectAction() portPickerAction {
 	portPath := ""
-	if m.selected >= 0 && m.selected < len(m.ports) {
-		portPath = m.ports[m.selected].PreferredPath
+	if m.portList.Selected >= 0 && m.portList.Selected < len(m.ports) {
+		portPath = m.ports[m.portList.Selected].PreferredPath
 		if portPath == "" {
-			portPath = m.ports[m.selected].Device
+			portPath = m.ports[m.portList.Selected].Device
 		}
 	}
 	if portPath == "" {
@@ -258,11 +256,7 @@ func (m portPickerModel) renderPortList(st styles, w, h int) []string {
 	chipW := 10
 	starW := 2
 
-	start := 0
-	if m.selected >= h {
-		start = m.selected - h + 1
-	}
-	end := min(len(m.ports), start+h)
+	start, end := m.portList.Window(len(m.ports), h)
 
 	out := make([]string, 0, h)
 	for i := start; i < end; i++ {
@@ -270,7 +264,7 @@ func (m portPickerModel) renderPortList(st styles, w, h int) []string {
 
 		cursor := "  "
 		rowStyle := st.Row
-		if i == m.selected {
+		if i == m.portList.Selected {
 			cursor = "→ "
 			rowStyle = st.SelectedRow
 		}

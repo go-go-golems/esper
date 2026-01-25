@@ -75,8 +75,8 @@ type monitorModel struct {
 	hostFocus     hostFocus
 	showInspector bool
 
-	events        []monitorEvent
-	selectedEvent int
+	events    []monitorEvent
+	eventList selectList
 
 	toastUntil time.Time
 	toastText  string
@@ -221,37 +221,39 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.LineUp(10)
 				} else {
-					m.selectedEvent = clamp(m.selectedEvent-10, 0, max(0, len(m.events)-1))
+					m.eventList.Move(-10, len(m.events))
 				}
 			case tea.KeyPgDown:
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.LineDown(10)
 				} else {
-					m.selectedEvent = clamp(m.selectedEvent+10, 0, max(0, len(m.events)-1))
+					m.eventList.Move(10, len(m.events))
 				}
 			case tea.KeyUp:
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.LineUp(1)
 				} else {
-					m.selectedEvent = clamp(m.selectedEvent-1, 0, max(0, len(m.events)-1))
+					m.eventList.Move(-1, len(m.events))
 				}
 			case tea.KeyDown:
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.LineDown(1)
 				} else {
-					m.selectedEvent = clamp(m.selectedEvent+1, 0, max(0, len(m.events)-1))
+					m.eventList.Move(1, len(m.events))
 				}
 			case tea.KeyHome:
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.GotoTop()
 				} else {
-					m.selectedEvent = 0
+					m.eventList.Selected = 0
+					m.eventList.SetLen(len(m.events))
 				}
 			case tea.KeyEnd:
 				if m.hostFocus == hostFocusViewport {
 					m.viewport.GotoBottom()
 				} else {
-					m.selectedEvent = max(0, len(m.events)-1)
+					m.eventList.Selected = max(0, len(m.events)-1)
+					m.eventList.SetLen(len(m.events))
 				}
 			}
 			if t.String() == "G" || t.String() == "g" {
@@ -579,10 +581,10 @@ func (m *monitorModel) addEvent(kind, title, body string) {
 	const maxEvents = 200
 	if len(m.events) > maxEvents {
 		m.events = append([]monitorEvent{}, m.events[len(m.events)-maxEvents:]...)
-		m.selectedEvent = clamp(m.selectedEvent, 0, max(0, len(m.events)-1))
+		m.eventList.SetLen(len(m.events))
 	}
 	if len(m.events) == 1 {
-		m.selectedEvent = 0
+		m.eventList.Selected = 0
 	}
 }
 
@@ -614,18 +616,14 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	sub := st.Hint.Render(fmt.Sprintf("focus: %s  events:%d", focus, len(m.events)))
 
 	listH := max(3, panelInnerH-6)
-	start := 0
-	if m.selectedEvent >= listH {
-		start = m.selectedEvent - listH + 1
-	}
-	end := min(len(m.events), start+listH)
+	start, end := m.eventList.Window(len(m.events), listH)
 
 	var rows []string
 	for i := start; i < end; i++ {
 		e := m.events[i]
 		prefix := fmt.Sprintf("%s %-7s ", e.At.Format("15:04:05"), e.Kind)
 		line := padOrTrim(prefix+e.Title, max(0, panelInnerW-2))
-		if i == m.selectedEvent {
+		if i == m.eventList.Selected {
 			line = st.SelectedRow.Render(line)
 		} else {
 			line = st.Row.Render(line)
@@ -639,8 +637,8 @@ func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
 	body := stringsJoinVertical(rows)
 
 	detail := ""
-	if m.selectedEvent >= 0 && m.selectedEvent < len(m.events) {
-		detail = m.events[m.selectedEvent].Body
+	if m.eventList.Selected >= 0 && m.eventList.Selected < len(m.events) {
+		detail = m.events[m.eventList.Selected].Body
 	}
 	detail = padOrTrim(detail, max(0, panelInnerW-2))
 
@@ -808,7 +806,7 @@ func (m *monitorModel) execPalette(cmd paletteCommand) monitorAction {
 		m.log = nil
 		m.viewport.SetContent("")
 		m.events = nil
-		m.selectedEvent = 0
+		m.eventList.Selected = 0
 		return monitorAction{}
 	case cmdShowHelp:
 		return monitorAction{kind: monitorActionOpenOverlay, overlay: newHelpOverlay()}
