@@ -12,21 +12,26 @@ import (
 )
 
 type Options struct {
-	All        bool
-	PreferByID bool
+	All                 bool
+	PreferByID          bool
+	ProbeEsptool        bool
+	EsptoolConnectMode  string
+	EsptoolConnectTries int
+	EsptoolAfter        string
 }
 
 type Port struct {
-	Device        string   `json:"device"`
-	ByID          string   `json:"by_id,omitempty"`
-	VID           string   `json:"vid,omitempty"`
-	PID           string   `json:"pid,omitempty"`
-	Manufacturer  string   `json:"manufacturer,omitempty"`
-	Product       string   `json:"product,omitempty"`
-	Serial        string   `json:"serial,omitempty"`
-	Score         int      `json:"score"`
-	Reasons       []string `json:"reasons,omitempty"`
-	PreferredPath string   `json:"preferred_path,omitempty"`
+	Device        string              `json:"device"`
+	ByID          string              `json:"by_id,omitempty"`
+	VID           string              `json:"vid,omitempty"`
+	PID           string              `json:"pid,omitempty"`
+	Manufacturer  string              `json:"manufacturer,omitempty"`
+	Product       string              `json:"product,omitempty"`
+	Serial        string              `json:"serial,omitempty"`
+	Score         int                 `json:"score"`
+	Reasons       []string            `json:"reasons,omitempty"`
+	PreferredPath string              `json:"preferred_path,omitempty"`
+	Esptool       *EsptoolProbeResult `json:"esptool,omitempty"`
 }
 
 func (p Port) VIDPID() string {
@@ -37,7 +42,6 @@ func (p Port) VIDPID() string {
 }
 
 func ScanLinux(ctx context.Context, opts Options) ([]Port, error) {
-	_ = ctx
 	if runtime.GOOS != "linux" {
 		return nil, errors.New("ScanLinux is supported only on linux")
 	}
@@ -76,6 +80,25 @@ func ScanLinux(ctx context.Context, opts Options) ([]Port, error) {
 		scorePort(p)
 		if opts.PreferByID && p.ByID != "" {
 			p.PreferredPath = p.ByID
+		}
+
+		if opts.ProbeEsptool {
+			portPath := p.PreferredPath
+			if portPath == "" {
+				portPath = p.Device
+			}
+			probe, err := ProbeEsptool(ctx, EsptoolProbeOptions{
+				Port:            portPath,
+				Baud:            115200,
+				ConnectMode:     opts.EsptoolConnectMode,
+				ConnectAttempts: opts.EsptoolConnectTries,
+				After:           opts.EsptoolAfter,
+			})
+			if err != nil {
+				p.Esptool = &EsptoolProbeResult{OK: false, Error: err.Error()}
+			} else {
+				p.Esptool = probe
+			}
 		}
 
 		if !opts.All && p.Score < 50 {
@@ -201,4 +224,3 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
-
