@@ -429,26 +429,4 @@ func updateSingleLineField(cur string, k tea.KeyMsg) string {
 	return cur
 }
 
-func padOrTrim(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) > w {
-		return lipgloss.NewStyle().Width(w).MaxWidth(w).Render(s)
-	}
-	return lipgloss.NewStyle().Width(w).Render(s)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
+// padOrTrim, min, max moved to ui_helpers.go

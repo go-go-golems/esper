@@ -31,15 +31,7 @@ func max(a, b int) int {
 	return b
 }
 
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
+// clamp already exists in app_model.go
 
 // splitLinesN splits a string into exactly n lines, padding or truncating as needed.
 func splitLinesN(s string, n int) []string {

@@ -1053,19 +1053,7 @@ func (m monitorModel) viewportWidthFor(sz size) int {
 	return max(1, sz.W)
 }
 
-func stringsJoinVertical(lines []string) string {
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
-}
-
-func splitKeepNewline(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.SplitAfter(s, "\n")
-	// If string doesn't end with newline, last part won't include it.
-	// Keep it anyway (viewport may still show partial).
-	return parts
-}
+// stringsJoinVertical and splitKeepNewline moved to ui_helpers.go
 
 func (m *monitorModel) refreshViewportContent() {
 	baseLines := m.filteredLines()
@@ -1155,20 +1143,7 @@ func (m monitorModel) filteredLines() []string {
 	return out
 }
 
-func splitLinesN(s string, n int) []string {
-	lines := strings.Split(s, "\n")
-	// lipgloss output sometimes has a trailing newline; drop it if it would add an extra empty row.
-	if len(lines) == n+1 && lines[len(lines)-1] == "" {
-		lines = lines[:n]
-	}
-	if len(lines) > n {
-		lines = lines[:n]
-	}
-	for len(lines) < n {
-		lines = append(lines, "")
-	}
-	return lines
-}
+// splitLinesN moved to ui_helpers.go
 
 func (m *monitorModel) searchApplyJump() {
 	m.searchComputeMatches()
