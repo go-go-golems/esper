@@ -241,7 +241,8 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			if m.session != nil {
 				_ = m.session.WriteLine(line)
 			}
-			return m, nil, monitorAction{}
+			// Continue serial read loop after sending
+			return m, m.readSerialCmd(), monitorAction{}
 		}
 
 		var cmd tea.Cmd
@@ -548,9 +549,9 @@ func (m monitorModel) View(st styles, sz size, curMode mode) string {
 			footer = padOrTrim(footerText, sz.W)
 		}
 	} else {
-		field := padOrTrim(m.input.View(), max(0, sz.W-4))
-		footerLine := "> [" + field + "]"
-		footerLine = truncate.StringWithTail(footerLine, uint(sz.W), "…")
+		// Simple prompt without extra brackets - just show "> " prefix
+		inputView := m.input.View()
+		footerLine := "> " + inputView
 		footer = padOrTrim(footerLine, sz.W)
 	}
 

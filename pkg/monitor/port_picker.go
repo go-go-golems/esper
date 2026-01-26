@@ -291,7 +291,8 @@ func (m portPickerModel) renderPanel(st styles, inner size) string {
 		"",
 	}
 
-	listH := inner.H - 9
+	// Form takes 7 lines + 1 blank line after list + 2 header lines = 10 total overhead
+	listH := inner.H - 10
 	if listH < 3 {
 		listH = 3
 	}
@@ -356,18 +357,25 @@ func (m portPickerModel) renderPortList(st styles, w, h int) []string {
 }
 
 func (m portPickerModel) renderForm(st styles, w int) []string {
+	// Baud rate selector
 	baudStr := fmt.Sprintf("%d", m.bauds[m.baudIdx])
-	baudField := fmt.Sprintf("Baud: [%s ▼]", padOrTrim(baudStr, 8))
-	baudFieldW := lipgloss.Width(baudField)
+	baudField := fmt.Sprintf("  Baud rate:  %s  ◀ ▶", padOrTrim(baudStr, 8))
 
-	// ELF field shares line with Baud field, so subtract baud width + separator
-	elfFieldW := max(10, w-baudFieldW-10) // "ELF: [" = 6, "]" = 1, separator = 3
-	elfField := fmt.Sprintf("ELF: [%s]", padOrTrim(m.elfPath, elfFieldW))
+	// ELF path input - show placeholder if empty
+	elfDisplay := m.elfPath
+	if elfDisplay == "" {
+		elfDisplay = "(none - optional for backtrace decode)"
+	}
+	elfField := fmt.Sprintf("  ELF path:   %s", padOrTrim(elfDisplay, max(10, w-14)))
 
-	// Toolchain field gets full width
-	tcFieldW := max(10, w-22) // "Toolchain prefix: [" = 20, "]" = 1, margin = 1
-	tcField := fmt.Sprintf("Toolchain prefix: [%s]", padOrTrim(m.toolchainPrefix, tcFieldW))
+	// Toolchain prefix input
+	tcDisplay := m.toolchainPrefix
+	if tcDisplay == "" {
+		tcDisplay = "(auto-detect)"
+	}
+	tcField := fmt.Sprintf("  Toolchain:  %s", padOrTrim(tcDisplay, max(10, w-14)))
 
+	// Apply focus highlighting
 	if m.focus == focusBaud {
 		baudField = st.SelectedRow.Render(baudField)
 	}
@@ -378,26 +386,29 @@ func (m portPickerModel) renderForm(st styles, w int) []string {
 		tcField = st.SelectedRow.Render(tcField)
 	}
 
-	probe := "[ ] Probe with esptool (may reset device)"
+	// Probe checkbox
+	probe := "  ○ Probe with esptool (may reset device)"
 	if m.probeEsptool {
-		probe = "[x] Probe with esptool (may reset device)"
+		probe = "  ● Probe with esptool (may reset device)"
 	}
 	if m.focus == focusProbe {
 		probe = st.SelectedRow.Render(probe)
 	}
 
-	buttons := "<Connect>    <Rescan>    <Quit>"
+	// Buttons - cleaner styling
+	connectBtn := "[ Connect ]"
 	if m.focus == focusButtons {
-		buttons = st.SelectedRow.Render(buttons)
+		connectBtn = st.SelectedRow.Render(connectBtn)
 	}
 
 	return []string{
-		padOrTrim(baudField+"   "+elfField, w),
+		padOrTrim(baudField, w),
+		padOrTrim(elfField, w),
 		padOrTrim(tcField, w),
 		"",
 		padOrTrim(probe, w),
 		"",
-		lipgloss.Place(w, 1, lipgloss.Center, lipgloss.Center, buttons),
+		lipgloss.Place(w, 1, lipgloss.Center, lipgloss.Center, connectBtn),
 	}
 }
 
