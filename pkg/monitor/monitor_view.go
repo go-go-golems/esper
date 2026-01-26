@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -802,106 +801,9 @@ func findFirstLineContaining(lines []string, needle string) int {
 	return -1
 }
 
-func (m monitorModel) readSerialCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.session == nil || m.session.port == nil {
-			return serialErrMsg{err: fmt.Errorf("not connected")}
-		}
-		buf := make([]byte, 4096)
-		n, err := m.session.port.Read(buf)
-		if err != nil {
-			return serialErrMsg{err: err}
-		}
-		if n <= 0 {
-			return serialChunkMsg{b: nil}
-		}
-		return serialChunkMsg{b: append([]byte{}, buf[:n]...)}
-	}
-}
+// readSerialCmd and tickCmd moved to monitor_serial.go
 
-func (m monitorModel) tickCmd() tea.Cmd {
-	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
-		return tickMsg{t: t}
-	})
-}
-
-func (m *monitorModel) addEvent(kind, title, body string) {
-	if body == "" {
-		body = title
-	}
-	m.events = append(m.events, monitorEvent{
-		At:    time.Now(),
-		Kind:  kind,
-		Title: title,
-		Body:  body,
-	})
-	const maxEvents = 200
-	if len(m.events) > maxEvents {
-		m.events = append([]monitorEvent{}, m.events[len(m.events)-maxEvents:]...)
-		m.eventList.SetLen(len(m.events))
-	}
-	if len(m.events) == 1 {
-		m.eventList.Selected = 0
-	}
-}
-
-func (m *monitorModel) setToast(text string, d time.Duration) {
-	if d <= 0 {
-		m.toastText = ""
-		m.toastUntil = time.Time{}
-		return
-	}
-	m.toastText = text
-	m.toastUntil = time.Now().Add(d)
-}
-
-func (m monitorModel) renderInspectorPanel(st styles, sz size) string {
-	if sz.W < 10 || sz.H < 4 {
-		return ""
-	}
-	panelInnerW := max(0, sz.W-st.Panel.GetHorizontalBorderSize())
-	panelInnerH := max(0, sz.H-st.Panel.GetVerticalBorderSize())
-	if len(m.events) == 0 {
-		return st.Panel.Width(panelInnerW).Height(panelInnerH).Render(st.Hint.Render("No events yet."))
-	}
-
-	header := st.PanelTitle.Render("Inspector")
-	focus := "view"
-	if m.hostFocus == hostFocusInspector {
-		focus = "inspector"
-	}
-	sub := st.Hint.Render(fmt.Sprintf("focus: %s  events:%d", focus, len(m.events)))
-
-	listH := max(3, panelInnerH-6)
-	start, end := m.eventList.Window(len(m.events), listH)
-
-	var rows []string
-	for i := start; i < end; i++ {
-		e := m.events[i]
-		prefix := fmt.Sprintf("%s %-7s ", e.At.Format("15:04:05"), e.Kind)
-		line := padOrTrim(prefix+e.Title, max(0, panelInnerW-2))
-		if i == m.eventList.Selected {
-			line = st.SelectedRow.Render(line)
-		} else {
-			line = st.Row.Render(line)
-		}
-		rows = append(rows, line)
-	}
-	for len(rows) < listH {
-		rows = append(rows, "")
-	}
-
-	body := stringsJoinVertical(rows)
-
-	detail := ""
-	if m.eventList.Selected >= 0 && m.eventList.Selected < len(m.events) {
-		detail = m.events[m.eventList.Selected].Body
-	}
-	detail = padOrTrim(detail, max(0, panelInnerW-2))
-
-	content := lipgloss.JoinVertical(lipgloss.Left, header, sub, "", body, "", detail)
-	return st.Panel.Width(panelInnerW).Height(panelInnerH).Render(content)
-}
+// addEvent, setToast, renderInspectorPanel moved to monitor_inspector.go
 
 // viewportWidthFor moved to monitor_model.go
 
@@ -1240,69 +1142,5 @@ func highlightPlainSubstring(s, query string, st lipgloss.Style) string {
 	return out.String()
 }
 
-func (m monitorModel) resetDeviceCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.session == nil {
-			return resetResultMsg{err: fmt.Errorf("not connected")}
-		}
-		return resetResultMsg{err: m.session.ResetPulse()}
-	}
-}
-
-func (m monitorModel) sendBreakCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.session == nil {
-			return sendBreakResultMsg{err: fmt.Errorf("not connected")}
-		}
-		return sendBreakResultMsg{err: m.session.SendBreak(250 * time.Millisecond)}
-	}
-}
-
-func (m *monitorModel) toggleSessionLogging() error {
-	if m.sessionLogOn {
-		m.closeSessionLogging()
-		m.setToast("log: OFF", 2*time.Second)
-		return nil
-	}
-
-	dir, err := os.UserCacheDir()
-	if err != nil || strings.TrimSpace(dir) == "" {
-		dir = os.TempDir()
-	}
-	dir = filepath.Join(dir, "esper")
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-		return mkErr
-	}
-	path := filepath.Join(dir, fmt.Sprintf("session-%s.log", time.Now().Format("20060102-150405")))
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-
-	m.sessionLogOn = true
-	m.sessionLogFile = f
-	m.sessionLogPath = path
-	m.setToast("log: ON ("+filepath.Base(path)+")", 3*time.Second)
-	return nil
-}
-
-func (m *monitorModel) closeSessionLogging() {
-	if m.sessionLogFile != nil {
-		_ = m.sessionLogFile.Close()
-	}
-	m.sessionLogOn = false
-	m.sessionLogFile = nil
-	m.sessionLogPath = ""
-}
-
-func (m *monitorModel) writeSessionLog(b []byte) {
-	if !m.sessionLogOn || m.sessionLogFile == nil || len(b) == 0 {
-		return
-	}
-	if _, err := m.sessionLogFile.Write(b); err != nil {
-		// If the file goes bad (disk full, etc), stop logging to avoid repeated errors.
-		m.closeSessionLogging()
-		m.setToast(fmt.Sprintf("log write failed: %v", err), 3*time.Second)
-	}
-}
+// resetDeviceCmd, sendBreakCmd moved to monitor_serial.go
+// toggleSessionLogging, closeSessionLogging, writeSessionLog moved to monitor_sessionlog.go
