@@ -243,27 +243,46 @@ func (m portPickerModel) View(st styles, sz size) string {
 		return padOrTrim(title, sz.W)
 	}
 
-	var sections []string
+	// Reserve 1 line for title, 1 line for footer
+	contentH := sz.H - 2
 
+	var errorSection string
+	errH := 0
 	if m.errBanner != "" {
 		b := st.ErrorBanner.Width(max(0, sz.W-st.ErrorBanner.GetHorizontalBorderSize())).Render(m.errBanner)
 		if m.errHint != "" {
 			b = lipgloss.JoinVertical(lipgloss.Left, b, st.Hint.Render(m.errHint))
 		}
-		sections = append(sections, b)
+		errorSection = b
+		errH = lipgloss.Height(b)
 	}
 
+	// Calculate panel size, accounting for error banner
 	panelW := min(sz.W, 78)
-	panelH := min(sz.H-2, 18)
+	panelH := min(contentH-errH, 18)
 
 	panelInner := size{W: panelW - st.Panel.GetHorizontalBorderSize(), H: panelH - st.Panel.GetVerticalBorderSize()}
 	panel := st.Panel.Width(panelInner.W).Height(panelInner.H).Render(m.renderPanel(st, panelInner))
-	sections = append(sections, sz.PlaceCentered(panel))
+
+	// Center the panel in the remaining content area (after title + error, before footer)
+	centerAreaH := contentH - errH
+	centeredPanel := lipgloss.Place(sz.W, centerAreaH, lipgloss.Center, lipgloss.Center, panel)
+
+	// Build content area (error + centered panel)
+	var content string
+	if errorSection != "" {
+		content = lipgloss.JoinVertical(lipgloss.Left, errorSection, centeredPanel)
+	} else {
+		content = centeredPanel
+	}
 
 	help := st.StatusBar.Render("↑↓ Navigate   Tab Next field   Enter Connect   n Nickname   d Device Manager   r Rescan   ? Help   q Quit")
-	sections = append(sections, padOrTrim(help, sz.W))
 
-	return lipgloss.JoinVertical(lipgloss.Left, padOrTrim(title, sz.W), lipgloss.JoinVertical(lipgloss.Left, sections...))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		padOrTrim(title, sz.W),
+		content,
+		padOrTrim(help, sz.W),
+	)
 }
 
 func (m portPickerModel) renderPanel(st styles, inner size) string {
@@ -339,8 +358,15 @@ func (m portPickerModel) renderPortList(st styles, w, h int) []string {
 func (m portPickerModel) renderForm(st styles, w int) []string {
 	baudStr := fmt.Sprintf("%d", m.bauds[m.baudIdx])
 	baudField := fmt.Sprintf("Baud: [%s ▼]", padOrTrim(baudStr, 8))
-	elfField := fmt.Sprintf("ELF: [%s]", padOrTrim(m.elfPath, max(10, w-18)))
-	tcField := fmt.Sprintf("Toolchain prefix: [%s]", padOrTrim(m.toolchainPrefix, max(10, w-18)))
+	baudFieldW := lipgloss.Width(baudField)
+
+	// ELF field shares line with Baud field, so subtract baud width + separator
+	elfFieldW := max(10, w-baudFieldW-10) // "ELF: [" = 6, "]" = 1, separator = 3
+	elfField := fmt.Sprintf("ELF: [%s]", padOrTrim(m.elfPath, elfFieldW))
+
+	// Toolchain field gets full width
+	tcFieldW := max(10, w-22) // "Toolchain prefix: [" = 20, "]" = 1, margin = 1
+	tcField := fmt.Sprintf("Toolchain prefix: [%s]", padOrTrim(m.toolchainPrefix, tcFieldW))
 
 	if m.focus == focusBaud {
 		baudField = st.SelectedRow.Render(baudField)
