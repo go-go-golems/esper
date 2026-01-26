@@ -4,6 +4,24 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Color palette for esper TUI
+var (
+	// Primary accent color (purple/violet)
+	colorPrimary = lipgloss.Color("#7D56F4")
+
+	// Semantic colors
+	colorError   = lipgloss.Color("#FF5F56") // Red
+	colorWarning = lipgloss.Color("#FFBD2E") // Yellow/Orange
+	colorSuccess = lipgloss.Color("#27C93F") // Green
+
+	// Neutral colors
+	colorDim        = lipgloss.Color("#626262") // Dimmed text
+	colorBorder     = lipgloss.Color("#444444") // Subtle border
+	colorHighlight  = lipgloss.Color("#3A3A5C") // Selection background
+	colorTitleBg    = lipgloss.Color("#1E1E2E") // Title bar background
+	colorStatusBg   = lipgloss.Color("#181825") // Status bar background
+)
+
 type styles struct {
 	ScreenFrame lipgloss.Style
 
@@ -28,44 +46,60 @@ type styles struct {
 }
 
 func defaultStyles() styles {
-	border := lipgloss.NormalBorder()
+	roundedBorder := lipgloss.RoundedBorder()
 
 	return styles{
 		ScreenFrame: lipgloss.NewStyle().
-			Border(border).
+			Border(roundedBorder).
+			BorderForeground(colorBorder).
 			Padding(0, 0),
 
-		TitleBar: lipgloss.NewStyle().Bold(true),
+		TitleBar: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorPrimary),
+
 		StatusBar: lipgloss.NewStyle().
-			Faint(true),
+			Foreground(colorDim),
 
 		Panel: lipgloss.NewStyle().
-			Border(border).
+			Border(roundedBorder).
+			BorderForeground(colorBorder).
 			Padding(0, 1),
 
-		PanelTitle: lipgloss.NewStyle().Bold(true),
+		PanelTitle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorPrimary),
 
 		InputBox: lipgloss.NewStyle().
-			Border(border).
+			Border(roundedBorder).
+			BorderForeground(colorBorder).
 			Padding(0, 1),
 
 		ErrorBanner: lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder()).
+			BorderForeground(colorError).
+			Foreground(colorError).
 			Padding(0, 1),
 
 		InlineError: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1")),
+			Foreground(colorError),
 
-		Hint: lipgloss.NewStyle().Faint(true),
+		Hint: lipgloss.NewStyle().
+			Foreground(colorDim),
 
 		OverlayDim: lipgloss.NewStyle().Faint(true),
+
 		OverlayBox: lipgloss.NewStyle().
-			Border(border).
+			Border(roundedBorder).
+			BorderForeground(colorPrimary).
 			Padding(1, 2),
 
 		OverlayText: lipgloss.NewStyle(),
 
-		SelectedRow: lipgloss.NewStyle().Bold(true),
-		Row:         lipgloss.NewStyle(),
+		SelectedRow: lipgloss.NewStyle().
+			Bold(true).
+			Background(colorHighlight),
+
+		Row: lipgloss.NewStyle(),
 	}
 }
