@@ -143,3 +143,27 @@ type filterSetMsg struct {
 type paletteExecMsg struct {
 	kind paletteCommandKind
 }
+
+type inspectorDetailCopyTextMsg struct {
+	label string
+	text  string
+}
+
+type inspectorDetailCopyFileMsg struct {
+	label string
+	path  string
+}
+
+type inspectorDetailSaveTextMsg struct {
+	label string
+	at    time.Time
+	text  string
+}
+
+type inspectorDetailJumpToLogMsg struct {
+	anchor string
+}
+
+type inspectorDetailNextEventMsg struct {
+	fromIndex int
+}

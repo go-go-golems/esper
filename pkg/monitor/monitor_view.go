@@ -364,7 +364,7 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			if m.showInspector && m.hostFocus == hostFocusInspector && (t.Type == tea.KeyEnter || t.String() == "enter") {
 				i := m.eventList.Selected
 				if i >= 0 && i < len(m.events) {
-					return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newInspectorDetailOverlay(m.events[i])}
+					return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newInspectorDetailOverlay(m.events[i], i)}
 				}
 				return m, nil, monitorAction{}
 			}
@@ -399,6 +399,96 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 	case paletteExecMsg:
 		cmd, act := m.execPalette(t.kind)
 		return m, cmd, act
+
+	case inspectorDetailCopyTextMsg:
+		text := strings.TrimSpace(t.text)
+		if text == "" {
+			m.setToast("nothing to copy", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		if err := copyToClipboard(text); err != nil {
+			m.setToast(fmt.Sprintf("copy failed: %v", err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.setToast("copied", 2*time.Second)
+		return m, nil, monitorAction{}
+
+	case inspectorDetailCopyFileMsg:
+		path := strings.TrimSpace(t.path)
+		if path == "" {
+			m.setToast("nothing to copy", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			m.setToast(fmt.Sprintf("read failed: %v", err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		if len(b) > 512*1024 {
+			m.setToast(fmt.Sprintf("too large to copy (%d bytes)", len(b)), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		if err := copyToClipboard(string(b)); err != nil {
+			m.setToast(fmt.Sprintf("copy failed: %v", err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.setToast("copied", 2*time.Second)
+		return m, nil, monitorAction{}
+
+	case inspectorDetailSaveTextMsg:
+		text := strings.TrimSpace(t.text)
+		if text == "" {
+			m.setToast("nothing to save", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		prefix := "esper-inspector"
+		switch t.label {
+		case "report":
+			prefix = "esper-coredump-report"
+		}
+		path, err := makeTimestampedPath(prefix, "txt", t.at)
+		if err != nil {
+			m.setToast(fmt.Sprintf("save failed: %v", err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			m.setToast(fmt.Sprintf("save failed: %v", err), 3*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.setToast("saved to: "+path, 4*time.Second)
+		return m, nil, monitorAction{}
+
+	case inspectorDetailJumpToLogMsg:
+		anchor := strings.TrimSpace(t.anchor)
+		if anchor == "" {
+			m.setToast("no anchor", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		lines := m.filteredLines()
+		lineIdx := findFirstLineContaining(lines, anchor)
+		if lineIdx < 0 {
+			m.setToast("anchor not found", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		m.follow = false
+		m.hostFocus = hostFocusViewport
+		m.viewport.YOffset = searchJumpTop(lineIdx, m.viewport.Height, len(lines))
+		m.setToast("jumped to log", 2*time.Second)
+		return m, nil, monitorAction{}
+
+	case inspectorDetailNextEventMsg:
+		if len(m.events) == 0 {
+			m.setToast("no events", 2*time.Second)
+			return m, nil, monitorAction{}
+		}
+		i := clamp(t.fromIndex, 0, len(m.events)-1)
+		next := i + 1
+		if next >= len(m.events) {
+			next = 0
+		}
+		m.eventList.Selected = next
+		m.eventList.SetLen(len(m.events))
+		return m, nil, monitorAction{kind: monitorActionOpenOverlay, overlay: newInspectorDetailOverlay(m.events[next], next)}
 
 	case resetDeviceMsg:
 		if curMode != modeHost {
@@ -443,6 +533,7 @@ func (m monitorModel) Update(msg tea.Msg, curMode mode) (monitorModel, tea.Cmd, 
 			wasInProgress := m.coredump.InProgress()
 			events, sendEnter := m.coredump.PushLine(line)
 			nowInProgress := m.coredump.InProgress()
+			m.appendCoreDumpLogEvents(events)
 			if sendEnter && m.session != nil {
 				_, _ = m.session.port.Write([]byte("\n"))
 			}
@@ -810,6 +901,47 @@ func (m *monitorModel) append(b []byte) {
 	}
 
 	m.writeSessionLog(b)
+}
+
+func (m *monitorModel) appendCoreDumpLogEvents(events [][]byte) {
+	if len(events) == 0 {
+		return
+	}
+
+	// Keep core dump log annotations small and scannable; avoid dumping the decoded report into the main viewport.
+	var out []byte
+	for _, ev := range events {
+		if len(ev) == 0 {
+			continue
+		}
+		if !bytes.HasPrefix(ev, []byte("---")) {
+			continue
+		}
+		// Stop before report content.
+		if bytes.HasPrefix(ev, []byte("--- Core dump report")) {
+			break
+		}
+		out = append(out, ev...)
+		if len(out) > 8*1024 {
+			break
+		}
+	}
+	if len(out) > 0 {
+		m.append(out)
+	}
+}
+
+func findFirstLineContaining(lines []string, needle string) int {
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return -1
+	}
+	for i, line := range lines {
+		if strings.Contains(stripANSI(line), needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m monitorModel) readSerialCmd() tea.Cmd {
