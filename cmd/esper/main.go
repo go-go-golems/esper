@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-go-golems/esper/pkg/commands/devicescmd"
+	"github.com/go-go-golems/esper/pkg/commands/matrixhttpcmd"
 	"github.com/go-go-golems/esper/pkg/commands/scancmd"
 	"github.com/go-go-golems/esper/pkg/devices"
 	"github.com/go-go-golems/esper/pkg/monitor"
@@ -107,6 +108,23 @@ func main() {
 		os.Exit(1)
 	}
 	rootCmd.AddCommand(cobraScanCmd)
+
+	matrixHTTPCmd, err := matrixhttpcmd.NewMatrixHTTPCommand()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "esper: create matrix-http command: %v\n", err)
+		os.Exit(1)
+	}
+	cobraMatrixHTTPCmd, err := cli.BuildCobraCommand(matrixHTTPCmd,
+		cli.WithParserConfig(cli.CobraParserConfig{
+			ShortHelpLayers: []string{schema.DefaultSlug},
+			MiddlewaresFunc: cli.CobraCommandDefaultMiddlewares,
+		}),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "esper: build matrix-http cobra command: %v\n", err)
+		os.Exit(1)
+	}
+	rootCmd.AddCommand(cobraMatrixHTTPCmd)
 
 	devicesCmd, err := devicescmd.NewDevicesCommand()
 	if err != nil {
