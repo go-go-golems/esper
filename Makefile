@@ -2,7 +2,7 @@
 
 GLAZED_LINT_BIN ?= /tmp/glazed-lint
 GLAZED_LINT_PKG ?= github.com/go-go-golems/glazed/cmd/tools/glazed-lint
-GLAZED_VERSION ?= $(shell GOWORK=off go list -m -f '{{.Version}}' github.com/go-go-golems/glazed 2>/dev/null)
+GLAZED_VERSION ?= main
 GLAZED_LINT_FLAGS ?=
 
 logcopter-generate:
@@ -13,7 +13,7 @@ logcopter-check:
 
 glazed-lint-build:
 	@echo "Building glazed-lint from Glazed module..."
-	@if [ -n "$(GLAZED_VERSION)" ] && [ "$(GLAZED_VERSION)" != "(devel)" ]; then 		echo "Installing $(GLAZED_LINT_PKG)@$(GLAZED_VERSION)"; 		GOBIN=$(dir $(GLAZED_LINT_BIN)) GOWORK=off go install $(GLAZED_LINT_PKG)@$(GLAZED_VERSION); 	else 		echo "Installing $(GLAZED_LINT_PKG) from workspace/module"; 		GOBIN=$(dir $(GLAZED_LINT_BIN)) go install $(GLAZED_LINT_PKG); 	fi
+	@if [ -n "1000 4 20 24 27 29 30 44 46 100 118 132 135 136 980 981 1000GLAZED_VERSION)" ]; then 		echo "Installing $(GLAZED_LINT_PKG)@$(GLAZED_VERSION)"; 		GOBIN=$(dir $(GLAZED_LINT_BIN)) GOWORK=off go install $(GLAZED_LINT_PKG)@$(GLAZED_VERSION); 	else 		echo "Installing $(GLAZED_LINT_PKG) from workspace/module"; 		GOBIN=$(dir $(GLAZED_LINT_BIN)) go install $(GLAZED_LINT_PKG); 	fi
 
 glazed-lint: glazed-lint-build
 	go vet -vettool=$(GLAZED_LINT_BIN) $(GLAZED_LINT_FLAGS) ./pkg/...
