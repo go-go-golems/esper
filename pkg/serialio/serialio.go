@@ -45,4 +45,3 @@ func Open(cfg OpenConfig) (serial.Port, string, error) {
 func hasGlob(s string) bool {
 	return strings.ContainsAny(s, "*?[")
 }
-

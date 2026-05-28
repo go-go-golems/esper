@@ -68,4 +68,3 @@ func autoColorForLine(line []byte) []byte {
 		return nil
 	}
 }
-

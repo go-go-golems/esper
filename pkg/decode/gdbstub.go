@@ -73,4 +73,3 @@ func checksumOK(payload []byte, chkHex []byte) bool {
 	}
 	return sum == got
 }
-
