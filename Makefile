@@ -1,0 +1,25 @@
+.PHONY: logcopter-generate logcopter-check glazed-lint-build glazed-lint
+
+GLAZED_LINT_BIN ?= /tmp/glazed-lint
+GLAZED_LINT_PKG ?= github.com/go-go-golems/glazed/cmd/tools/glazed-lint
+GLAZED_VERSION ?= main
+GLAZED_LINT_FLAGS ?= -glazedclilint.allow-paths=pkg/commands/devicescmd/,pkg/devices/
+
+logcopter-generate:
+	GOWORK=off go generate ./...
+
+logcopter-check:
+	GOWORK=off go tool logcopter-gen -area-prefix go-go-golems.esper -strip-prefix github.com/go-go-golems/esper -check ./cmd/... ./pkg/...
+
+glazed-lint-build:
+	@echo "Building glazed-lint from Glazed module..."
+	@if [ -n "$(GLAZED_VERSION)" ]; then \
+		echo "Installing $(GLAZED_LINT_PKG)@$(GLAZED_VERSION)"; \
+		GOBIN=$(dir $(GLAZED_LINT_BIN)) GOWORK=off go install $(GLAZED_LINT_PKG)@$(GLAZED_VERSION); \
+	else \
+		echo "Installing $(GLAZED_LINT_PKG) from workspace/module"; \
+		GOBIN=$(dir $(GLAZED_LINT_BIN)) go install $(GLAZED_LINT_PKG); \
+	fi
+
+glazed-lint: glazed-lint-build
+	go vet -vettool=$(GLAZED_LINT_BIN) $(GLAZED_LINT_FLAGS) ./pkg/...

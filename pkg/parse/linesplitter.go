@@ -47,4 +47,3 @@ func (s *LineSplitter) FinalizeTail() []byte {
 	s.tail = nil
 	return out
 }
-

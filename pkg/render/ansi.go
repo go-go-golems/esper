@@ -6,4 +6,3 @@ var (
 	ANSIGreen  = []byte("\x1b[0;32m")
 	ANSIYellow = []byte("\x1b[0;33m")
 )
-

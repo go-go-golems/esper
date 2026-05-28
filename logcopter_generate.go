@@ -1,0 +1,3 @@
+package esper
+
+//go:generate go tool logcopter-gen -area-prefix go-go-golems.esper -strip-prefix github.com/go-go-golems/esper ./cmd/... ./pkg/...

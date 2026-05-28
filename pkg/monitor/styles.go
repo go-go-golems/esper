@@ -15,11 +15,11 @@ var (
 	colorSuccess = lipgloss.Color("#27C93F") // Green
 
 	// Neutral colors
-	colorDim        = lipgloss.Color("#626262") // Dimmed text
-	colorBorder     = lipgloss.Color("#444444") // Subtle border
-	colorHighlight  = lipgloss.Color("#3A3A5C") // Selection background
-	colorTitleBg    = lipgloss.Color("#1E1E2E") // Title bar background
-	colorStatusBg   = lipgloss.Color("#181825") // Status bar background
+	colorDim       = lipgloss.Color("#626262") // Dimmed text
+	colorBorder    = lipgloss.Color("#444444") // Subtle border
+	colorHighlight = lipgloss.Color("#3A3A5C") // Selection background
+	colorTitleBg   = lipgloss.Color("#1E1E2E") // Title bar background
+	colorStatusBg  = lipgloss.Color("#181825") // Status bar background
 )
 
 type styles struct {
